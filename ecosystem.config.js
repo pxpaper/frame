@@ -1,11 +1,12 @@
+// ecosystem.config.js
 module.exports = {
     apps: [
       {
-        name: "frame",
+        name: "frame-server",
         script: "./server.js",
-        cwd: "/home/orangepi/frame",  // Ensure this is the absolute path to your 'frame' folder
         instances: 1,
-        exec_mode: "fork"
+        exec_mode: "fork",
+        watch: false
       }
     ]
   };

@@ -4,5 +4,3 @@
 
 echo "Launching kiosk mode..."
 chromium --noerrdialogs --disable-infobars --kiosk https://pixelpaper.com/frame.html
-
-#

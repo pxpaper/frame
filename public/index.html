@@ -1,19 +1,33 @@
+<!-- public/index.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Digital Picture Frame</title>
+  <style>
+    body {
+      margin: 0;
+      background: #000;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      overflow: hidden;
+    }
+    #content {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+    }
+  </style>
 </head>
 <body>
-  <h1>Welcome to Your Digital Picture Frame</h1>
+  <div id="content">
+    <h1>Welcome to Your Digital Picture Frame</h1>
+    <p>Waiting for updates...</p>
+  </div>
   <script src="/socket.io/socket.io.js"></script>
-  <script>
-    const socket = io();
-    socket.on('update', (data) => {
-      console.log('Update received:', data);
-      // Update the displayed image or content accordingly
-    });
-  </script>
+  <script src="/js/client.js"></script>
 </body>
 </html>

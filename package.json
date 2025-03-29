@@ -17,5 +17,11 @@
   "bugs": {
     "url": "https://github.com/pxpaper/frame/issues"
   },
-  "homepage": "https://github.com/pxpaper/frame#readme"
+  "homepage": "https://github.com/pxpaper/frame#readme",
+  "dependencies": {
+    "body-parser": "^2.2.0",
+    "express": "^4.21.2",
+    "qrcode": "^1.5.4",
+    "socket.io": "^4.8.1"
+  }
 }

@@ -2,8 +2,11 @@
 # update.sh - Local update script for pulling code updates from GitHub
 
 cd /home/orangepi/frame || exit
-echo "Pulling latest code..."
-git pull origin main
+echo "Fetching latest code from GitHub..."
+git fetch origin
+echo "Resetting local changes..."
+git reset --hard origin/main
+git clean -fd
 echo "Installing dependencies..."
 npm install
 echo "Reloading PM2 process..."

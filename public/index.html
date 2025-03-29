@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Digital Picture Frame</title>
+</head>
+<body>
+  <h1>Welcome to Your Digital Picture Frame</h1>
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    socket.on('update', (data) => {
+      console.log('Update received:', data);
+      // Update the displayed image or content accordingly
+    });
+  </script>
+</body>
+</html>

@@ -1,5 +1,4 @@
 // server.js
-//
 const express = require('express');
 const http = require('http');
 const QRCode = require('qrcode');
@@ -23,14 +22,34 @@ const wifiConfigPath = path.join(__dirname, 'config', 'wifi-config.json');
 // Helper function: Check if WiFi credentials exist
 const wifiCredentialsExist = () => fs.existsSync(wifiConfigPath);
 
+/**
+ * Function to execute a script and log output.
+ * @param {string} cmd - Command to execute.
+ * @param {function} callback - Callback after execution.
+ */
+const runScript = (cmd, callback) => {
+  exec(cmd, (error, stdout, stderr) => {
+    if (error) {
+      console.error(`[ERROR] ${cmd} failed: ${error}`);
+    }
+    if (stdout) {
+      console.log(`[DEBUG] ${cmd} output: ${stdout}`);
+    }
+    if (stderr) {
+      console.error(`[DEBUG] ${cmd} error output: ${stderr}`);
+    }
+    if (callback) callback(error);
+  });
+};
+
 // Route: If WiFi is not configured, redirect to setup page
 app.get('/', (req, res) => {
   if (!wifiCredentialsExist()) {
     console.log("[DEBUG] No WiFi credentials found; redirecting to /setup");
     res.redirect('/setup');
   } else {
-    // Optionally, show a "configuring" page while the device connects.
-    console.log("[DEBUG] WiFi credentials found; serving main page");
+    console.log("[DEBUG] WiFi credentials found; serving configuring page");
+    // You might show a "configuring" page until the kiosk mode launches.
     res.send(`<html>
       <head><title>Configuring...</title></head>
       <body>
@@ -86,25 +105,32 @@ app.post('/setup/wifi', (req, res) => {
     </body>
   </html>`);
   
-  // Delay a few seconds to allow the user to read the page, then switch modes.
+  // After a delay, switch modes and launch kiosk mode.
   setTimeout(() => {
-    // Execute the script to stop AP mode and configure client mode.
-    exec('bash scripts/stop_ap.sh', (error, stdout, stderr) => {
-      if (error) {
-        console.error(`Error stopping AP mode: ${error}`);
-        return;
+    runScript('bash scripts/stop_ap.sh', (error) => {
+      if (!error) {
+        runScript('bash scripts/launch_kiosk.sh');
       }
-      console.log(`AP mode stopped: ${stdout}`);
-      // After switching to client mode, launch kiosk mode.
-      exec('bash scripts/launch_kiosk.sh', (error, stdout, stderr) => {
-        if (error) {
-          console.error(`Error launching kiosk mode: ${error}`);
-          return;
-        }
-        console.log(`Kiosk mode launched: ${stdout}`);
-      });
     });
   }, 5000);
 });
 
-server.listen(3000, '0.0.0.0', () => console.log(`Server running on port 3000`));
+// Start the server on port 3000 and perform initial network mode setup.
+server.listen(3000, '0.0.0.0', () => {
+  console.log("[DEBUG] Server running on port 3000");
+  
+  // If WiFi credentials exist, switch to client mode and launch kiosk mode.
+  if (wifiCredentialsExist()) {
+    console.log("[DEBUG] WiFi credentials found at boot. Switching to client mode...");
+    runScript('bash scripts/stop_ap.sh', (error) => {
+      if (!error) {
+        console.log("[DEBUG] Launching kiosk mode...");
+        runScript('bash scripts/launch_kiosk.sh');
+      }
+    });
+  } else {
+    // Otherwise, start in AP mode.
+    console.log("[DEBUG] No WiFi credentials found at boot. Enabling AP mode...");
+    runScript('bash scripts/setup_ap.sh');
+  }
+});

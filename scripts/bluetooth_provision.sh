@@ -5,7 +5,7 @@
 echo "[DEBUG] Enabling Bluetooth provisioning mode..."
 
 # Ensure the Bluetooth service is running.
-sudo systemctl start bluetooth
+sudo -n systemctl start bluetooth
 
 # Use bluetoothctl to set up the device for pairing.
 bluetoothctl <<EOF

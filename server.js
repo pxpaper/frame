@@ -103,4 +103,4 @@ app.post('/setup/wifi', (req, res) => {
   }, 5000);
 });
 
-server.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
+server.listen(3000, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));

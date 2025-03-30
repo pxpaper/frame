@@ -7,6 +7,9 @@ const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
 
+// Import bleno for BLE GATT server functionality.
+const bleno = require('bleno');
+
 const app = express();
 const server = http.createServer(app);
 
@@ -18,6 +21,11 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 const wifiConfigPath = path.join(__dirname, 'config', 'wifi-config.json');
+
+// Fixed UUIDs for your provisioning service and characteristic.
+// (Replace these with the ones you decide on.)
+const PROVISIONING_SERVICE_UUID = "19b10000-e8f2-537e-4f6c-d104768a1214";
+const CREDENTIALS_CHARACTERISTIC_UUID = "19b10001-e8f2-537e-4f6c-d104768a1217";
 
 // Helper function: Check if WiFi credentials exist and are valid.
 const wifiCredentialsExist = () => {
@@ -53,6 +61,56 @@ const runScript = (cmd, callback) => {
   });
 };
 
+// --- BLE GATT Server Setup using bleno --- //
+const BlenoPrimaryService = bleno.PrimaryService;
+const BlenoCharacteristic = bleno.Characteristic;
+
+class CredentialsCharacteristic extends BlenoCharacteristic {
+  constructor() {
+    super({
+      uuid: CREDENTIALS_CHARACTERISTIC_UUID.replace(/-/g, ''),
+      properties: ['write'],
+      value: null,
+    });
+  }
+  
+  // This method is called when the mobile app writes data.
+  onWriteRequest(data, offset, withoutResponse, callback) {
+    try {
+      // Assume data is a UTF8-encoded JSON string.
+      const payload = data.toString('utf8');
+      console.log("[DEBUG] Received BLE credentials:", payload);
+      const credentials = JSON.parse(payload);
+      // Save credentials to file.
+      fs.writeFileSync(wifiConfigPath, JSON.stringify(credentials, null, 2));
+      console.log("[DEBUG] WiFi credentials saved via BLE.");
+      // Stop BLE advertising now that provisioning is complete.
+      bleno.stopAdvertising();
+      // (Optional) Trigger client mode actions, e.g. call stop_bluetooth.sh and launch_kiosk.sh.
+      runScript('bash scripts/stop_bluetooth.sh', (error) => {
+        if (!error) {
+          runScript('bash scripts/launch_kiosk.sh');
+        }
+      });
+      callback(this.RESULT_SUCCESS);
+    } catch (error) {
+      console.error("[ERROR] Failed to process BLE credentials:", error);
+      callback(this.RESULT_UNLIKELY_ERROR);
+    }
+  }
+}
+
+// Create the provisioning service with the credential characteristic.
+const provisioningService = new BlenoPrimaryService({
+  uuid: PROVISIONING_SERVICE_UUID.replace(/-/g, ''),
+  characteristics: [
+    new CredentialsCharacteristic()
+  ]
+});
+
+// --- End BLE GATT Server Setup --- //
+
+// Express routes
 // Route: If WiFi is not configured, redirect to setup page
 app.get('/', (req, res) => {
   if (!wifiCredentialsExist()) {
@@ -72,13 +130,12 @@ app.get('/', (req, res) => {
 
 // Route: Setup page for WiFi configuration
 app.get('/setup', (req, res) => {
-  // Modify your setup page to instruct the user to use Bluetooth provisioning.
+  // Instruct the user to use Bluetooth provisioning.
   res.sendFile(path.join(__dirname, 'public', 'setup.html'));
 });
 
-// Route: Generate and display QR code for setup instructions
+// Route: Generate and display QR code for setup instructions.
 app.get('/setup/qrcode', (req, res) => {
-  // The QR code could encode a URL with instructions or a link to download the mobile app.
   const setupURL = `http://${req.headers.host}/setup`;
   QRCode.toDataURL(setupURL, (err, url) => {
     if (err) {
@@ -96,17 +153,15 @@ app.get('/setup/qrcode', (req, res) => {
   });
 });
 
-// Route: Handle WiFi credentials submission from the provisioning app
+// Route: (Alternate HTTP-based provisioning, if needed)
 app.post('/setup/wifi', (req, res) => {
   const { ssid, password } = req.body;
   if (!ssid || !password) {
     return res.status(400).send('Missing credentials');
   }
-  // Save credentials to config/wifi-config.json
   const wifiData = { ssid, password };
   fs.writeFileSync(wifiConfigPath, JSON.stringify(wifiData, null, 2));
   
-  // Send confirmation to the user and refresh after a delay
   res.send(`<html>
     <head>
       <meta http-equiv="refresh" content="5; URL='/'" />
@@ -118,7 +173,7 @@ app.post('/setup/wifi', (req, res) => {
     </body>
   </html>`);
   
-  // After a delay, stop Bluetooth provisioning and launch kiosk mode.
+  // After a delay, stop BLE provisioning and launch kiosk mode.
   setTimeout(() => {
     runScript('bash scripts/stop_bluetooth.sh', (error) => {
       if (!error) {
@@ -128,13 +183,14 @@ app.post('/setup/wifi', (req, res) => {
   }, 5000);
 });
 
-// Start the server on port 3000 and perform initial network mode setup.
+// Start the HTTP server on port 3000
 server.listen(3000, '0.0.0.0', () => {
   console.log("[DEBUG] Server running on port 3000");
   
   if (wifiCredentialsExist()) {
     console.log("[DEBUG] Valid WiFi credentials found at boot. Switching to client mode...");
-    // If credentials exist, ensure client mode is active (you might still call stop_bluetooth.sh if needed)
+    // Stop BLE advertising if running and launch kiosk mode.
+    bleno.stopAdvertising();
     runScript('bash scripts/stop_bluetooth.sh', (error) => {
       if (!error) {
         console.log("[DEBUG] Launching kiosk mode...");
@@ -142,8 +198,30 @@ server.listen(3000, '0.0.0.0', () => {
       }
     });
   } else {
-    console.log("[DEBUG] No valid WiFi credentials found at boot. Enabling Bluetooth provisioning mode...");
-    // Instead of starting AP mode, we now enable Bluetooth provisioning.
-    runScript('bash scripts/bluetooth_provision.sh');
+    console.log("[DEBUG] No valid WiFi credentials found at boot. Enabling BLE provisioning mode...");
+    // Start BLE provisioning advertisement.
+    bleno.on('stateChange', (state) => {
+      console.log("[DEBUG] BLE state:", state);
+      if (state === 'poweredOn') {
+        bleno.startAdvertising('Provisioner', [PROVISIONING_SERVICE_UUID.replace(/-/g, '')], (err) => {
+          if (err) {
+            console.error("[ERROR] Failed to start advertising BLE:", err);
+          } else {
+            console.log("[DEBUG] BLE advertising started");
+          }
+        });
+      } else {
+        bleno.stopAdvertising();
+      }
+    });
+  
+    bleno.on('advertisingStart', (error) => {
+      if (!error) {
+        console.log("[DEBUG] Setting BLE provisioning service...");
+        bleno.setServices([provisioningService]);
+      } else {
+        console.error("[ERROR] Advertising start error:", error);
+      }
+    });
   }
 });

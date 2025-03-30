@@ -19,8 +19,19 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const wifiConfigPath = path.join(__dirname, 'config', 'wifi-config.json');
 
-// Helper function: Check if WiFi credentials exist
-const wifiCredentialsExist = () => fs.existsSync(wifiConfigPath);
+// Helper function: Check if WiFi credentials exist and are valid.
+const wifiCredentialsExist = () => {
+  if (!fs.existsSync(wifiConfigPath)) {
+    return false;
+  }
+  try {
+    const data = JSON.parse(fs.readFileSync(wifiConfigPath, 'utf8'));
+    return data.ssid && data.password && data.ssid.trim() !== '' && data.password.trim() !== '';
+  } catch (e) {
+    console.error("[ERROR] wifi-config.json invalid:", e);
+    return false;
+  }
+};
 
 /**
  * Function to execute a script and log output.
@@ -45,10 +56,10 @@ const runScript = (cmd, callback) => {
 // Route: If WiFi is not configured, redirect to setup page
 app.get('/', (req, res) => {
   if (!wifiCredentialsExist()) {
-    console.log("[DEBUG] No WiFi credentials found; redirecting to /setup");
+    console.log("[DEBUG] No valid WiFi credentials found; redirecting to /setup");
     res.redirect('/setup');
   } else {
-    console.log("[DEBUG] WiFi credentials found; serving configuring page");
+    console.log("[DEBUG] Valid WiFi credentials found; serving configuring page");
     // You might show a "configuring" page until the kiosk mode launches.
     res.send(`<html>
       <head><title>Configuring...</title></head>
@@ -119,9 +130,9 @@ app.post('/setup/wifi', (req, res) => {
 server.listen(3000, '0.0.0.0', () => {
   console.log("[DEBUG] Server running on port 3000");
   
-  // If WiFi credentials exist, switch to client mode and launch kiosk mode.
+  // If valid WiFi credentials exist, switch to client mode and launch kiosk mode.
   if (wifiCredentialsExist()) {
-    console.log("[DEBUG] WiFi credentials found at boot. Switching to client mode...");
+    console.log("[DEBUG] Valid WiFi credentials found at boot. Switching to client mode...");
     runScript('bash scripts/stop_ap.sh', (error) => {
       if (!error) {
         console.log("[DEBUG] Launching kiosk mode...");
@@ -130,7 +141,7 @@ server.listen(3000, '0.0.0.0', () => {
     });
   } else {
     // Otherwise, start in AP mode.
-    console.log("[DEBUG] No WiFi credentials found at boot. Enabling AP mode...");
+    console.log("[DEBUG] No valid WiFi credentials found at boot. Enabling AP mode...");
     runScript('bash scripts/setup_ap.sh');
   }
 });

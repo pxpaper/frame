@@ -4,7 +4,7 @@
 echo "[DEBUG] Enabling Bluetooth provisioning mode..."
 
 # Start Bluetooth non-interactively.
-sudo -n systemctl start bluetooth
+sudo -n /usr/bin/systemctl start bluetooth
 
 # Use bluetoothctl to reset any existing agent, then set up pairing.
 bluetoothctl <<EOF

@@ -11,6 +11,8 @@ const { exec } = require('child_process');
 const app = express();
 const server = http.createServer(app);
 
+console.log("[DEBUG] Starting Node.js server...");
+
 // Parse JSON and URL-encoded data
 app.use(bodyParser.json());
 app.use(express.urlencoded({ extended: true }));
@@ -24,9 +26,11 @@ const wifiCredentialsExist = () => fs.existsSync(wifiConfigPath);
 // Route: If WiFi is not configured, redirect to setup page
 app.get('/', (req, res) => {
   if (!wifiCredentialsExist()) {
+    console.log("[DEBUG] No WiFi credentials found; redirecting to /setup");
     res.redirect('/setup');
   } else {
     // Optionally, show a "configuring" page while the device connects.
+    console.log("[DEBUG] WiFi credentials found; serving main page");
     res.send(`<html>
       <head><title>Configuring...</title></head>
       <body>

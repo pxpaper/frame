@@ -4,8 +4,8 @@
 echo "[DEBUG] Stopping AP mode and switching to client mode..."
 
 # Stop AP services
-sudo systemctl stop hostapd && echo "[DEBUG] hostapd stopped."
-sudo systemctl stop dnsmasq && echo "[DEBUG] dnsmasq stopped."
+sudo -n systemctl stop hostapd && echo "[DEBUG] hostapd stopped."
+sudo -n systemctl stop dnsmasq && echo "[DEBUG] dnsmasq stopped."
 
 # Read WiFi credentials from the configuration file.
 WIFI_CONFIG="/home/orangepi/frame/config/wifi-config.json"
@@ -39,5 +39,5 @@ echo "[DEBUG] wpa_supplicant.conf updated."
 
 # Reconfigure the WiFi interface (assuming wlan0).
 echo "[DEBUG] Reconfiguring wlan0..."
-sudo wpa_cli -i wlan0 reconfigure && echo "[DEBUG] wlan0 reconfigured."
+sudo -n wpa_cli -i wlan0 reconfigure && echo "[DEBUG] wlan0 reconfigured."
 echo "[DEBUG] Client mode configured. Attempting to connect to $SSID."

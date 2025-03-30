@@ -2,9 +2,9 @@
 # scripts/setup_ap.sh
 
 echo "[DEBUG] Starting AP mode setup..."
-sudo systemctl stop wpa_supplicant && echo "[DEBUG] wpa_supplicant stopped."
-sudo systemctl start hostapd && echo "[DEBUG] hostapd started."
-sudo systemctl start dnsmasq && echo "[DEBUG] dnsmasq started."
+sudo -n systemctl stop wpa_supplicant && echo "[DEBUG] wpa_supplicant stopped."
+sudo -n systemctl start hostapd && echo "[DEBUG] hostapd started."
+sudo -n systemctl start dnsmasq && echo "[DEBUG] dnsmasq started."
 
 echo "[DEBUG] AP mode enabled."
 

@@ -60,7 +60,6 @@ app.get('/', (req, res) => {
     res.redirect('/setup');
   } else {
     console.log("[DEBUG] Valid WiFi credentials found; serving configuring page");
-    // You might show a "configuring" page until the kiosk mode launches.
     res.send(`<html>
       <head><title>Configuring...</title></head>
       <body>
@@ -73,11 +72,13 @@ app.get('/', (req, res) => {
 
 // Route: Setup page for WiFi configuration
 app.get('/setup', (req, res) => {
+  // Modify your setup page to instruct the user to use Bluetooth provisioning.
   res.sendFile(path.join(__dirname, 'public', 'setup.html'));
 });
 
-// Route: Generate and display QR code for setup URL
+// Route: Generate and display QR code for setup instructions
 app.get('/setup/qrcode', (req, res) => {
+  // The QR code could encode a URL with instructions or a link to download the mobile app.
   const setupURL = `http://${req.headers.host}/setup`;
   QRCode.toDataURL(setupURL, (err, url) => {
     if (err) {
@@ -86,15 +87,16 @@ app.get('/setup/qrcode', (req, res) => {
       res.send(`<html>
         <head><title>QR Code</title></head>
         <body>
-          <h1>Scan to Setup WiFi</h1>
+          <h1>Scan to Setup WiFi via Bluetooth</h1>
           <img src="${url}" alt="QR Code">
+          <p>Please use our mobile app to connect via Bluetooth and share your WiFi credentials.</p>
         </body>
       </html>`);
     }
   });
 });
 
-// Route: Handle WiFi credentials submission from the captive portal
+// Route: Handle WiFi credentials submission from the provisioning app
 app.post('/setup/wifi', (req, res) => {
   const { ssid, password } = req.body;
   if (!ssid || !password) {
@@ -112,13 +114,13 @@ app.post('/setup/wifi', (req, res) => {
     </head>
     <body>
       <h1>WiFi credentials saved.</h1>
-      <p>The device will now switch to client mode and connect to your network.</p>
+      <p>The device will now use your network settings.</p>
     </body>
   </html>`);
   
-  // After a delay, switch modes and launch kiosk mode.
+  // After a delay, stop Bluetooth provisioning and launch kiosk mode.
   setTimeout(() => {
-    runScript('bash scripts/stop_ap.sh', (error) => {
+    runScript('bash scripts/stop_bluetooth.sh', (error) => {
       if (!error) {
         runScript('bash scripts/launch_kiosk.sh');
       }
@@ -130,18 +132,18 @@ app.post('/setup/wifi', (req, res) => {
 server.listen(3000, '0.0.0.0', () => {
   console.log("[DEBUG] Server running on port 3000");
   
-  // If valid WiFi credentials exist, switch to client mode and launch kiosk mode.
   if (wifiCredentialsExist()) {
     console.log("[DEBUG] Valid WiFi credentials found at boot. Switching to client mode...");
-    runScript('bash scripts/stop_ap.sh', (error) => {
+    // If credentials exist, ensure client mode is active (you might still call stop_bluetooth.sh if needed)
+    runScript('bash scripts/stop_bluetooth.sh', (error) => {
       if (!error) {
         console.log("[DEBUG] Launching kiosk mode...");
         runScript('bash scripts/launch_kiosk.sh');
       }
     });
   } else {
-    // Otherwise, start in AP mode.
-    console.log("[DEBUG] No valid WiFi credentials found at boot. Enabling AP mode...");
-    runScript('bash scripts/setup_ap.sh');
+    console.log("[DEBUG] No valid WiFi credentials found at boot. Enabling Bluetooth provisioning mode...");
+    // Instead of starting AP mode, we now enable Bluetooth provisioning.
+    runScript('bash scripts/bluetooth_provision.sh');
   }
 });

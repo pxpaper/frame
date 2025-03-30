@@ -10,8 +10,8 @@ git clean -fd
 # Ensure scripts have the correct executable permissions
 chmod +x update.sh
 chmod +x scripts/launch_kiosk.sh
-chmod +x scripts/setup_ap.sh
-chmod +x scripts/stop_ap.sh
+chmod +x scripts/bluetooth_provision.sh
+chmod +x scripts/stop_bluetooth.sh
 
 echo "Installing dependencies..."
 npm install

@@ -1,15 +1,15 @@
 #!/bin/bash
 # scripts/bluetooth_provision.sh
-# Enable Bluetooth provisioning mode.
 
 echo "[DEBUG] Enabling Bluetooth provisioning mode..."
 
-# Ensure the Bluetooth service is running.
+# Start Bluetooth non-interactively.
 sudo -n systemctl start bluetooth
 
-# Use bluetoothctl to set up the device for pairing.
+# Use bluetoothctl to reset any existing agent, then set up pairing.
 bluetoothctl <<EOF
 power on
+agent off
 agent on
 default-agent
 discoverable on

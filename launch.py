@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 import subprocess
 import time
+import os
+
+# Build the path to the virtual environment's python3 interpreter.
+VENV_PYTHON = os.path.join(os.getcwd(), "venv", "bin", "python3")
 
 def update_repo():
     try:
@@ -14,5 +18,5 @@ def update_repo():
 if __name__ == '__main__':
     time.sleep(10)  # Wait for the wifi to be ready
     update_repo()
-    # Launch the GUI application after updating
-    subprocess.Popen(["python3", "gui.py"])
+    # Launch the GUI application using the venv's python interpreter
+    subprocess.Popen([VENV_PYTHON, "gui.py"])

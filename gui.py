@@ -21,7 +21,7 @@ def update_status():
         launched = True
         # Launch Chromium in kiosk mode pointing to the desired URL.
         subprocess.Popen([
-            "chromium-browser",
+            "chromium",
             "--noerrdialogs",
             "--disable-infobars",
             "--kiosk",

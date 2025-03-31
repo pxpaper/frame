@@ -39,7 +39,7 @@ def start_ble_advertising():
             log_debug(f"hciconfig hci0 up error: {result.stderr.strip()}")
 
         # Enable LE advertising (using mode "3").
-        result = subprocess.run(["sudo", "hciconfig", "hci0", "leadv", "3"],
+        result = subprocess.run(["sudo", "hciconfig", "hci0", "leadv"],
                                 capture_output=True, text=True)
         if result.returncode == 0:
             log_debug("hciconfig hci0 leadv 3: SUCCESS")

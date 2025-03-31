@@ -17,4 +17,4 @@ if __name__ == '__main__':
     time.sleep(10) 
     update_repo()
 
-# oop
+# oopsies

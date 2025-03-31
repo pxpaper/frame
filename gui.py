@@ -2,15 +2,14 @@
 import tkinter as tk
 import socket
 import subprocess
+import time
 import qrcode
 from PIL import Image, ImageTk
 
 launched = False  # Flag to ensure we only launch once
 qr_label = None   # Global widget for QR code display
 qr_photo = None   # Global reference to the PhotoImage
-
-# List for debug messages.
-debug_messages = []
+debug_messages = []  # List for debug messages
 
 def log_debug(message):
     """Append a message to the debug log and update the debug text widget."""
@@ -21,29 +20,38 @@ def log_debug(message):
     debug_text.delete(1.0, tk.END)
     debug_text.insert(tk.END, "\n".join(debug_messages[-10:]))
     debug_text.config(state=tk.DISABLED)
+    print(message)  # Also print to console for additional debugging
 
 def start_ble_advertising():
     """
     Configure the Bluetooth adapter using btmgmt to advertise with the name "PixelPaperFrame".
-    This function uses the newer btmgmt commands instead of hciconfig/hcitool.
+    Uses btmgmt commands to enable LE mode and advertising.
     """
     try:
         log_debug("Starting BLE advertising using btmgmt...")
+        
         # Enable LE mode.
-        result = subprocess.run(["sudo", "btmgmt", "le", "on"],
-                                capture_output=True, text=True)
+        result = subprocess.run(["sudo", "btmgmt", "le", "on"], capture_output=True, text=True)
         if result.returncode == 0:
             log_debug("btmgmt le on: SUCCESS")
         else:
             log_debug("btmgmt le on error: " + result.stderr.strip())
 
         # Enable advertising.
-        result = subprocess.run(["sudo", "btmgmt", "advertising", "on"],
-                                capture_output=True, text=True)
+        result = subprocess.run(["sudo", "btmgmt", "advertising", "on"], capture_output=True, text=True)
         if result.returncode == 0:
             log_debug("btmgmt advertising on: SUCCESS")
         else:
             log_debug("btmgmt advertising on error: " + result.stderr.strip())
+        
+        # Wait a moment to allow the advertisement to start.
+        log_debug("Waiting 3 seconds for BLE advertisement to stabilize...")
+        time.sleep(3)
+        
+        # Optionally, check the status with btmgmt info.
+        result = subprocess.run(["sudo", "btmgmt", "info"], capture_output=True, text=True)
+        log_debug("btmgmt info:\n" + result.stdout.strip())
+        
     except Exception as e:
         log_debug("Exception in start_ble_advertising: " + str(e))
 

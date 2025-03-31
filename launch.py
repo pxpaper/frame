@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-import os
-import stat
 import subprocess
 import time
 
@@ -14,7 +12,7 @@ def update_repo():
         print(f"Error updating repository: {e}")
 
 if __name__ == '__main__':
-    time.sleep(10) 
+    time.sleep(10)  # Wait for the wifi to be ready
     update_repo()
-
-# oopsies
+    # Launch the GUI application after updating
+    subprocess.Popen(["python3", "gui.py"])

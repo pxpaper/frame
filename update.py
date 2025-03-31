@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
+import os
+import stat
 import subprocess
+
+# Automatically set the executable bit on this file.
+# 0o755 means: owner read/write/execute, group and others read/execute.
+current_file = os.path.realpath(__file__)
+os.chmod(current_file, 0o755)
 
 def update_repo():
     try:

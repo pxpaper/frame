@@ -2,6 +2,7 @@
 import os
 import stat
 import subprocess
+import time
 
 def update_repo():
     try:
@@ -13,6 +14,7 @@ def update_repo():
         print(f"Error updating repository: {e}")
 
 if __name__ == '__main__':
+    time.sleep(10) 
     update_repo()
 
-# ooooooo
+# oop

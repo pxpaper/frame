@@ -25,7 +25,7 @@ def update_status():
             "--noerrdialogs",
             "--disable-infobars",
             "--kiosk",
-            "https://pxpaper.com/frame"
+            "https://pxpaper.com/frame.html"
         ])
         # Close the Tkinter GUI once the browser has launched.
         root.destroy()

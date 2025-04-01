@@ -4,12 +4,12 @@ import socket
 import subprocess
 import time
 import threading
-from PIL import Image, ImageTk
 from bluezero import adapter, peripheral
 
 # Global GUI variables and flags.
 launched = False          # Flag to ensure we only launch once
 debug_messages = []       # List for debug messages
+provisioning_char = None  # Global reference to our provisioning characteristic
 
 # UUIDs for our custom provisioning service and characteristic.
 PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
@@ -85,7 +85,7 @@ def update_status():
         root.destroy()
     elif not connected:
         label.config(text="WiFi Not Connected. Waiting for connection...")
-        log_debug("WiFi not connected; waiting for connection...")
+        #log_debug("WiFi not connected; waiting for connection...")
         root.after(5000, update_status)
 
 # --- Bluezero GATT Server Functions ---
@@ -99,13 +99,18 @@ def wifi_write_callback(value, options):
     try:
         credentials = bytes(value).decode('utf-8')
         log_debug("Received WiFi credentials via BLE: " + credentials)
-        # Here you can add logic to store these credentials or attempt to connect to WiFi.
+        # For debugging, send back a confirmation notification.
+        if provisioning_char is not None:
+            provisioning_char.set_value(b"Credentials Received")
+            log_debug("Sent confirmation notification.")
+        # You could also add code here to update WiFi configuration.
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
 
 def start_gatt_server():
     """Sets up and publishes a BLE GATT server for provisioning using Bluezero."""
+    global provisioning_char
     try:
         dongles = adapter.Adapter.available()
         if not dongles:
@@ -119,14 +124,14 @@ def start_gatt_server():
         ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
         # Add a custom provisioning service.
         ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
-        # Add a write characteristic for WiFi provisioning.
-        ble_periph.add_characteristic(
+        # Add a write+notify characteristic for WiFi provisioning.
+        provisioning_char = ble_periph.add_characteristic(
             srv_id=1,
             chr_id=1,
             uuid=PROVISIONING_CHAR_UUID,
-            value=[],  # Initial empty value.
+            value=[],  # Start with an empty value.
             notifying=False,
-            flags=['write'],
+            flags=['write', 'notify'],
             write_callback=wifi_write_callback,
             read_callback=None,
             notify_callback=None

@@ -92,7 +92,7 @@ def update_status():
         root.destroy()
     elif not connected:
         label.config(text="WiFi Not Connected. Waiting for connection...")
-        log_debug("WiFi not connected; waiting for connection...")
+        #log_debug("WiFi not connected; waiting for connection...")
         root.after(5000, update_status)
 
 # --- Bluezero GATT Server Functions ---

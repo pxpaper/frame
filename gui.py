@@ -55,8 +55,34 @@ def update_status():
         root.destroy()
     elif not connected:
         label.config(text="WiFi Not Connected. Waiting for connection...")
-        #log_debug("WiFi not connected; waiting for connection...")
         root.after(5000, update_status)
+
+# --- External Pairing Agent Setup ---
+
+def setup_external_agent():
+    """
+    Uses bluetoothctl to set the agent to NoInputNoOutput and
+    set it as the default. This command is piped so that it runs non-interactively.
+    """
+    try:
+        log_debug("Setting up external pairing agent...")
+        # The following command echoes the necessary commands into bluetoothctl.
+        # It sets the agent to NoInputNoOutput and registers it as the default agent.
+        cmd = (
+            "echo -e 'agent NoInputNoOutput\ndefault-agent\nquit' | sudo bluetoothctl"
+        )
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if result.returncode == 0:
+            log_debug("External pairing agent set successfully.")
+        else:
+            log_debug("Error setting external pairing agent: " + result.stderr.strip())
+    except Exception as e:
+        log_debug("Exception in setup_external_agent: " + str(e))
+
+def start_external_agent_thread():
+    """Starts the external agent setup in a background daemon thread."""
+    t = threading.Thread(target=setup_external_agent, daemon=True)
+    t.start()
 
 # --- Bluezero GATT Server Functions ---
 
@@ -90,8 +116,8 @@ def start_gatt_server():
         dongle_addr = list(dongles)[0].address
         log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
         
-        # Create a Peripheral object with a local name (e.g., "PixelPaper").
-        ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
+        # Create a Peripheral object with a local name.
+        ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaperFrame")
         # Add a custom provisioning service.
         ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
         # Add a write+notify characteristic for WiFi provisioning.
@@ -132,6 +158,9 @@ if __name__ == '__main__':
     debug_text = tk.Text(root, height=10, bg="#f0f0f0")
     debug_text.pack(fill=tk.X, side=tk.BOTTOM)
     debug_text.config(state=tk.DISABLED)
+
+    # Start the external pairing agent.
+    start_external_agent_thread()
 
     # Start the BLE GATT server for provisioning in a background thread.
     start_gatt_server_thread()

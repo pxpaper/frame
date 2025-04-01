@@ -4,7 +4,7 @@ import socket
 import subprocess
 import time
 import threading
-from bluezero import adapter, peripheral
+from bluezero import adapter, peripheral, agent
 
 # Global GUI variables and flags.
 launched = False          # Flag to ensure we only launch once
@@ -55,7 +55,6 @@ def update_status():
         root.destroy()
     elif not connected:
         label.config(text="WiFi Not Connected. Waiting for connection...")
-        #log_debug("WiFi not connected; waiting for connection...")
         root.after(5000, update_status)
 
 # --- Bluezero GATT Server Functions ---
@@ -90,8 +89,8 @@ def start_gatt_server():
         dongle_addr = list(dongles)[0].address
         log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
         
-        # Create a Peripheral object with a local name (e.g., "PixelPaper").
-        ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
+        # Create a Peripheral object with a local name (e.g., "PixelPaperFrame").
+        ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaperFrame")
         # Add a custom provisioning service.
         ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
         # Add a write+notify characteristic for WiFi provisioning.
@@ -117,6 +116,26 @@ def start_gatt_server_thread():
     t = threading.Thread(target=start_gatt_server, daemon=True)
     t.start()
 
+# --- BlueZ Pairing Agent Functions ---
+
+def start_pairing_agent():
+    """
+    Creates and runs a BlueZ agent with capability 'NoInputNoOutput'
+    so that pairing requests are auto-accepted.
+    """
+    try:
+        # Create an agent. The agent path here is arbitrary.
+        ag = agent.Agent('/com/pixelpaper/agent', capability='NoInputNoOutput')
+        log_debug("Pairing agent started with capability NoInputNoOutput.")
+        ag.run()  # This call is blocking; run it in a separate thread.
+    except Exception as e:
+        log_debug("Exception in pairing agent: " + str(e))
+
+def start_pairing_agent_thread():
+    """Starts the pairing agent in a background daemon thread."""
+    t = threading.Thread(target=start_pairing_agent, daemon=True)
+    t.start()
+
 # --- Main GUI Setup ---
 
 if __name__ == '__main__':
@@ -132,6 +151,9 @@ if __name__ == '__main__':
     debug_text = tk.Text(root, height=10, bg="#f0f0f0")
     debug_text.pack(fill=tk.X, side=tk.BOTTOM)
     debug_text.config(state=tk.DISABLED)
+
+    # Start the pairing agent so that pairing is auto-accepted.
+    start_pairing_agent_thread()
 
     # Start the BLE GATT server for provisioning in a background thread.
     start_gatt_server_thread()

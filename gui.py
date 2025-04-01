@@ -38,8 +38,8 @@ def start_ble_advertising():
         log_debug("Starting BLE advertising using BlueZ API (Bluezero)...")
         # Create an advertisement for adapter hci0 as a peripheral.
         ble_adv = advertisement.Advertisement(0, 'peripheral')
-        # Set the local name to "PixelPaper"
-        ble_adv.add_local_name("PixelPaper")
+        # Set the local name by assigning to the local_name attribute.
+        ble_adv.local_name = "PixelPaper"
         # Optionally include TX power in the advertisement.
         ble_adv.include_tx_power = True
         # Register the advertisement with BlueZ.

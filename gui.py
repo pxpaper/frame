@@ -17,12 +17,12 @@ def log_debug(message):
     debug_text.delete(1.0, tk.END)
     debug_text.insert(tk.END, "\n".join(debug_messages[-10:]))
     debug_text.config(state=tk.DISABLED)
-    print(message)  # Also print to console for additional debugging
+    print(message)  # Also print to console for debugging
 
 def start_gatt_server():
     try:
         log_debug("Starting GATT server using venv interpreter...")
-        # Launch the GATT server in the background.
+        # Launch the GATT server in the background using your venv interpreter.
         subprocess.Popen([
             "sudo",
             "/home/orangepi/frame/venv/bin/python3",
@@ -38,11 +38,11 @@ def start_ble_advertising():
         log_debug("Starting BLE advertising using BlueZ API (Bluezero)...")
         # Create an advertisement for adapter hci0 as a peripheral.
         ble_adv = advertisement.Advertisement(0, 'peripheral')
-        # Set the local name by assigning to the local_name attribute.
+        # Set the local name by assigning to the attribute.
         ble_adv.local_name = "PixelPaper"
         # Optionally include TX power in the advertisement.
         ble_adv.include_tx_power = True
-        # Register the advertisement with BlueZ.
+        # Start (register) the advertisement with BlueZ.
         ble_adv.start()
         log_debug("BLE advertising registered via BlueZ API.")
     except Exception as e:
@@ -75,7 +75,6 @@ def update_status():
         root.destroy()
     elif not connected:
         label.config(text="WiFi Not Connected. Waiting for connection...")
-        #log_debug("WiFi not connected; still waiting.")
         # Re-check connection every 5 seconds.
         root.after(5000, update_status)
 

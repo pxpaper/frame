@@ -16,7 +16,7 @@ def update_repo():
         print(f"Error updating repository: {e}")
 
 if __name__ == '__main__':
-    time.sleep(10)  # Wait for the wifi to be ready
+    time.sleep(10)  # Wait for the WiFi to be ready
     update_repo()
     # Launch the GUI application using the venv's python interpreter
     subprocess.Popen([VENV_PYTHON, "gui.py"])

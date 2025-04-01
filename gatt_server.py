@@ -28,7 +28,7 @@ def get_adapter_address():
         print("Error fetching adapter address:", e)
         return None
 
-# Define your custom service and characteristic UUIDs.
+# Define custom service and characteristic UUIDs.
 FRAME_SERVICE_UUID = '12345678-1234-5678-1234-56789abcdef0'
 FRAME_CHAR_UUID = '12345678-1234-5678-1234-56789abcdef1'
 
@@ -50,7 +50,7 @@ def write_callback(value, options):
     return
 
 # Create the Peripheral (GATT server) object.
-# Note: Pass the adapter address as the first positional argument.
+# Note: Pass the adapter address as the first argument.
 my_peripheral = peripheral.Peripheral(ADAPTER_ADDRESS,
                                         local_name='PixelPaper',
                                         service_uuids=[FRAME_SERVICE_UUID])

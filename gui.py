@@ -3,17 +3,12 @@ import tkinter as tk
 import socket
 import subprocess
 import time
-import qrcode
-from PIL import Image, ImageTk
 import threading
-
-# Bluezero imports for the GATT server
+from PIL import Image, ImageTk
 from bluezero import adapter, peripheral
 
 # Global GUI variables and flags.
 launched = False          # Flag to ensure we only launch once
-qr_label = None           # Global widget for QR code display
-qr_photo = None           # Global reference to the PhotoImage
 debug_messages = []       # List for debug messages
 
 # UUIDs for our custom provisioning service and characteristic.
@@ -69,24 +64,17 @@ def check_wifi_connection():
     except OSError:
         return False
 
-def generate_qr_code():
-    """Generate a QR code image for Bluetooth provisioning."""
-    qr_data = "BT-CONNECT:frame-provisioning"  # Placeholder provisioning data
-    qr = qrcode.QRCode(version=1, box_size=10, border=4)
-    qr.add_data(qr_data)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    return img
-
 def update_status():
-    """Update GUI status: if WiFi is connected, launch browser; else, show QR code."""
-    global launched, qr_label, qr_photo
+    """
+    Update GUI status: if WiFi is connected, launch the browser;
+    otherwise, display a waiting message.
+    """
+    global launched
     connected = check_wifi_connection()
     if connected and not launched:
         label.config(text="WiFi Connected. Launching frame...")
         log_debug("WiFi connected, launching browser.")
         launched = True
-        # Launch Chromium in kiosk mode pointing to the desired URL.
         subprocess.Popen([
             "chromium",
             "--noerrdialogs",
@@ -94,22 +82,10 @@ def update_status():
             "--kiosk",
             "https://pixelpaper.com/frame.html"
         ])
-        # Close the Tkinter GUI.
         root.destroy()
     elif not connected:
-        label.config(text="WiFi Not Connected. Waiting for connection...\nScan the QR code below for provisioning via Bluetooth.")
-        log_debug("WiFi not connected; displaying QR code.")
-        # Generate and display the QR code.
-        img = generate_qr_code()
-        qr_photo = ImageTk.PhotoImage(img)
-        if qr_label is None:
-            qr_label = tk.Label(root, image=qr_photo)
-            qr_label.image = qr_photo  # Keep a reference!
-            qr_label.pack(pady=20)
-        else:
-            qr_label.config(image=qr_photo)
-            qr_label.image = qr_photo
-        # Re-check connection every 5 seconds.
+        label.config(text="WiFi Not Connected. Waiting for connection...")
+        log_debug("WiFi not connected; waiting for connection...")
         root.after(5000, update_status)
 
 # --- Bluezero GATT Server Functions ---
@@ -117,13 +93,13 @@ def update_status():
 def wifi_write_callback(value, options):
     """
     Write callback for our provisioning characteristic.
-    Called when a mobile app writes data to provision the frame.
-    'value' is a list of integers representing the bytes.
+    Called when a mobile app writes WiFi credentials via BLE.
+    'value' is a list of integers representing the bytes sent.
     """
     try:
         credentials = bytes(value).decode('utf-8')
         log_debug("Received WiFi credentials via BLE: " + credentials)
-        # Here you could add logic to update WiFi configuration.
+        # Here you can add logic to store these credentials or attempt to connect to WiFi.
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
@@ -148,7 +124,7 @@ def start_gatt_server():
             srv_id=1,
             chr_id=1,
             uuid=PROVISIONING_CHAR_UUID,
-            value=[],  # Start with an empty value.
+            value=[],  # Initial empty value.
             notifying=False,
             flags=['write'],
             write_callback=wifi_write_callback,
@@ -168,7 +144,6 @@ def start_gatt_server_thread():
 # --- Main GUI Setup ---
 
 if __name__ == '__main__':
-    # Set up the main Tkinter window.
     root = tk.Tk()
     root.title("Frame Status")
     root.attributes('-fullscreen', True)

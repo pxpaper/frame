@@ -43,7 +43,7 @@ def start_ble_advertising():
         # Optionally include TX power in the advertisement.
         ble_adv.include_tx_power = True
         # Register the advertisement with BlueZ.
-        ble_adv.register()
+        ble_adv.start()
         log_debug("BLE advertising registered via BlueZ API.")
     except Exception as e:
         log_debug("Exception in start_ble_advertising: " + str(e))

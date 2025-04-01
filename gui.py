@@ -27,7 +27,7 @@ def log_debug(message):
     print(message)
 
 def start_ble_advertising():
-    """Starts BLE advertising using btmgmt commands."""
+    """Starts BLE advertising using btmgmt commands with connectable mode enabled."""
     try:
         log_debug("Starting BLE advertising using btmgmt...")
         
@@ -37,6 +37,13 @@ def start_ble_advertising():
             log_debug("btmgmt le on: SUCCESS")
         else:
             log_debug("btmgmt le on error: " + result.stderr.strip())
+        
+        # Enable connectable mode.
+        result = subprocess.run(["sudo", "btmgmt", "connectable", "on"], capture_output=True, text=True)
+        if result.returncode == 0:
+            log_debug("btmgmt connectable on: SUCCESS")
+        else:
+            log_debug("btmgmt connectable on error: " + result.stderr.strip())
 
         # Enable advertising.
         result = subprocess.run(["sudo", "btmgmt", "advertising", "on"], capture_output=True, text=True)
@@ -85,7 +92,7 @@ def update_status():
         root.destroy()
     elif not connected:
         label.config(text="WiFi Not Connected. Waiting for connection...")
-        #log_debug("WiFi not connected; waiting for connection...")
+        log_debug("WiFi not connected; waiting for connection...")
         root.after(5000, update_status)
 
 # --- Bluezero GATT Server Functions ---
@@ -97,13 +104,13 @@ def wifi_write_callback(value, options):
     'value' is a list of integers representing the bytes sent.
     """
     try:
+        log_debug("wifi_write_callback triggered!")
         credentials = bytes(value).decode('utf-8')
         log_debug("Received WiFi credentials via BLE: " + credentials)
         # For debugging, send back a confirmation notification.
         if provisioning_char is not None:
             provisioning_char.set_value(b"Credentials Received")
             log_debug("Sent confirmation notification.")
-        # You could also add code here to update WiFi configuration.
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
@@ -138,6 +145,7 @@ def start_gatt_server():
         )
         log_debug("Publishing GATT server for provisioning...")
         ble_periph.publish()  # This call starts the peripheral event loop.
+        log_debug("GATT server published successfully.")
     except Exception as e:
         log_debug("Exception in start_gatt_server: " + str(e))
 

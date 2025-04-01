@@ -26,43 +26,6 @@ def log_debug(message):
     debug_text.config(state=tk.DISABLED)
     print(message)
 
-def start_ble_advertising():
-    """Starts BLE advertising using btmgmt commands with connectable mode enabled."""
-    try:
-        log_debug("Starting BLE advertising using btmgmt...")
-        
-        # Enable LE mode.
-        result = subprocess.run(["sudo", "btmgmt", "le", "on"], capture_output=True, text=True)
-        if result.returncode == 0:
-            log_debug("btmgmt le on: SUCCESS")
-        else:
-            log_debug("btmgmt le on error: " + result.stderr.strip())
-        
-        # Enable connectable mode.
-        result = subprocess.run(["sudo", "btmgmt", "connectable", "on"], capture_output=True, text=True)
-        if result.returncode == 0:
-            log_debug("btmgmt connectable on: SUCCESS")
-        else:
-            log_debug("btmgmt connectable on error: " + result.stderr.strip())
-
-        # Enable advertising.
-        result = subprocess.run(["sudo", "btmgmt", "advertising", "on"], capture_output=True, text=True)
-        if result.returncode == 0:
-            log_debug("btmgmt advertising on: SUCCESS")
-        else:
-            log_debug("btmgmt advertising on error: " + result.stderr.strip())
-        
-        # Wait a moment for the advertisement to stabilize.
-        log_debug("Waiting 3 seconds for BLE advertisement to stabilize...")
-        time.sleep(3)
-        
-        # Optionally, log the status via btmgmt info.
-        result = subprocess.run(["sudo", "btmgmt", "info"], capture_output=True, text=True)
-        log_debug("btmgmt info:\n" + result.stdout.strip())
-        
-    except Exception as e:
-        log_debug("Exception in start_ble_advertising: " + str(e))
-
 def check_wifi_connection():
     """Test for internet connectivity by connecting to Google DNS."""
     try:
@@ -170,9 +133,6 @@ if __name__ == '__main__':
     debug_text.pack(fill=tk.X, side=tk.BOTTOM)
     debug_text.config(state=tk.DISABLED)
 
-    # Start BLE advertising using btmgmt.
-    #start_ble_advertising()
-    
     # Start the BLE GATT server for provisioning in a background thread.
     start_gatt_server_thread()
 

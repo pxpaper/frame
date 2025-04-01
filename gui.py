@@ -26,6 +26,19 @@ def log_debug(message):
     debug_text.config(state=tk.DISABLED)
     print(message)
 
+def setup_auto_pair_agent():
+    """
+    Automatically registers the NoInputNoOutput pairing agent using bluetoothctl.
+    This ensures that pairing requests are automatically accepted.
+    """
+    try:
+        # We pipe commands to bluetoothctl so that it registers the agent and sets it as default.
+        cmd = "echo -e 'agent NoInputNoOutput\ndefault-agent\nquit' | bluetoothctl"
+        subprocess.run(["bash", "-c", cmd], check=True)
+        log_debug("Auto pairing agent set to NoInputNoOutput.")
+    except Exception as e:
+        log_debug("Error setting auto pairing agent: " + str(e))
+
 def check_wifi_connection():
     """Test for internet connectivity by connecting to Google DNS."""
     try:
@@ -55,7 +68,6 @@ def update_status():
         root.destroy()
     elif not connected:
         label.config(text="WiFi Not Connected. Waiting for connection...")
-        #log_debug("WiFi not connected; waiting for connection...")
         root.after(5000, update_status)
 
 # --- Bluezero GATT Server Functions ---
@@ -132,6 +144,9 @@ if __name__ == '__main__':
     debug_text = tk.Text(root, height=10, bg="#f0f0f0")
     debug_text.pack(fill=tk.X, side=tk.BOTTOM)
     debug_text.config(state=tk.DISABLED)
+
+    # Set up the automatic pairing agent so that any pairing request is auto-accepted.
+    setup_auto_pair_agent()
 
     # Start the BLE GATT server for provisioning in a background thread.
     start_gatt_server_thread()

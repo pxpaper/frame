@@ -6,8 +6,6 @@ A simple BLE GATT server for PixelPaper provisioning using Bluezero.
 
 import sys
 from bluezero import peripheral
-
-# Include our adapter lookup function.
 import re
 import subprocess
 
@@ -18,7 +16,6 @@ def get_adapter_address():
     """
     try:
         result = subprocess.run(["hciconfig"], capture_output=True, text=True)
-        # Look for the first occurrence of "BD Address: XX:XX:XX:XX:XX:XX" in the output.
         match = re.search(r"BD Address:\s+([0-9A-F:]+)", result.stdout, re.IGNORECASE)
         if match:
             adapter_addr = match.group(1)
@@ -41,24 +38,20 @@ if ADAPTER_ADDRESS is None:
     print("Cannot start GATT server without a Bluetooth adapter.")
     sys.exit(1)
 
-# Define callbacks for the characteristic.
 def read_callback():
-    """
-    Return the current provisioning status or a placeholder value.
-    """
+    """Return the current provisioning status or a placeholder value."""
     print("GATT: Read request received.")
     return b"Provisioning data"
 
 def write_callback(value, options):
-    """
-    Process the provisioning data sent from the mobile app.
-    """
+    """Process the provisioning data sent from the mobile app."""
     print("GATT: Write request received. Data:", value)
     # TODO: Parse and store the received credentials.
     return
 
 # Create the Peripheral (GATT server) object.
-my_peripheral = peripheral.Peripheral(adapter_addr=ADAPTER_ADDRESS,
+# Note: Pass the adapter address as the first positional argument.
+my_peripheral = peripheral.Peripheral(ADAPTER_ADDRESS,
                                         local_name='PixelPaper',
                                         service_uuids=[FRAME_SERVICE_UUID])
 

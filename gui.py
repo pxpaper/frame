@@ -26,98 +26,6 @@ def log_debug(message):
     debug_text.config(state=tk.DISABLED)
     print(message)
 
-def setup_auto_pairing_agent():
-    """
-    Registers a DBus Agent that auto-accepts all pairing requests.
-    This function uses BlueZ's Agent API via DBus and runs a GLib main loop.
-    """
-    import dbus
-    import dbus.service
-    import dbus.mainloop.glib
-    from gi.repository import GLib
-
-    # Set up the main loop for DBus.
-    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
-    bus = dbus.SystemBus()
-
-    AGENT_PATH = "/com/pixelpaper/agent"
-    CAPABILITY = "NoInputNoOutput"  # We want to auto-accept without user input.
-
-    # Helper: mark a device as trusted.
-    def set_trusted(device_path):
-        try:
-            props = dbus.Interface(bus.get_object("org.bluez", device_path),
-                                   "org.freedesktop.DBus.Properties")
-            props.Set("org.bluez.Device1", "Trusted", True)
-            log_debug("Marked device as trusted: " + device_path)
-        except Exception as e:
-            log_debug("Failed to mark device as trusted: " + str(e))
-
-    # Define our auto-accepting Agent.
-    class Agent(dbus.service.Object):
-        @dbus.service.method("org.bluez.Agent1", in_signature="", out_signature="")
-        def Release(self):
-            log_debug("Agent Released")
-
-        @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="s")
-        def RequestPinCode(self, device):
-            log_debug("RequestPinCode for device: " + device)
-            set_trusted(device)
-            return "0000"
-
-        @dbus.service.method("org.bluez.Agent1", in_signature="ou", out_signature="")
-        def RequestConfirmation(self, device, passkey):
-            log_debug(f"RequestConfirmation for {device} with passkey {passkey}")
-            set_trusted(device)
-            # Automatically confirm without waiting.
-            return
-
-        @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="")
-        def RequestAuthorization(self, device):
-            log_debug("RequestAuthorization for device: " + device)
-            set_trusted(device)
-            return
-
-        @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="u")
-        def RequestPasskey(self, device):
-            log_debug("RequestPasskey for device: " + device)
-            set_trusted(device)
-            # Return a fixed passkey.
-            return dbus.UInt32(0)
-
-        @dbus.service.method("org.bluez.Agent1", in_signature="ouq", out_signature="")
-        def DisplayPasskey(self, device, passkey, entered):
-            log_debug(f"DisplayPasskey: {device}, passkey: {passkey}, entered: {entered}")
-
-        @dbus.service.method("org.bluez.Agent1", in_signature="os", out_signature="")
-        def DisplayPinCode(self, device, pincode):
-            log_debug(f"DisplayPinCode: {device}, pincode: {pincode}")
-
-        @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="")
-        def Cancel(self, device):
-            log_debug("Cancel pairing for device: " + device)
-
-    # Register the agent.
-    try:
-        agent = Agent(bus, AGENT_PATH)
-        agent_manager = dbus.Interface(bus.get_object("org.bluez", "/org/bluez"),
-                                       "org.bluez.AgentManager1")
-        agent_manager.RegisterAgent(AGENT_PATH, CAPABILITY)
-        agent_manager.RequestDefaultAgent(AGENT_PATH)
-        log_debug("Auto pairing agent registered and set as default.")
-    except Exception as e:
-        log_debug("Failed to register auto pairing agent: " + str(e))
-        return
-
-    # Run the GLib main loop to process DBus events.
-    mainloop = GLib.MainLoop()
-    mainloop.run()
-
-def start_pairing_agent_thread():
-    """Starts the auto pairing agent in a daemon thread."""
-    t = threading.Thread(target=setup_auto_pairing_agent, daemon=True)
-    t.start()
-
 def check_wifi_connection():
     """Test for internet connectivity by connecting to Google DNS."""
     try:
@@ -192,7 +100,7 @@ def start_gatt_server():
             uuid=PROVISIONING_CHAR_UUID,
             value=[],  # Start with an empty value.
             notifying=False,
-            flags=['write', 'notify'],
+            flags=['write', 'write-without-response', 'notify'],
             write_callback=wifi_write_callback,
             read_callback=None,
             notify_callback=None
@@ -213,8 +121,7 @@ def start_gatt_server_thread():
 if __name__ == '__main__':
     root = tk.Tk()
     root.title("Frame Status")
-    #root.attributes('-fullscreen', True)
-    root.attributes('-fullscreen', False)
+    root.attributes('-fullscreen', True)
 
     # Main status label.
     label = tk.Label(root, text="Checking WiFi...", font=("Helvetica", 48))
@@ -224,9 +131,6 @@ if __name__ == '__main__':
     debug_text = tk.Text(root, height=10, bg="#f0f0f0")
     debug_text.pack(fill=tk.X, side=tk.BOTTOM)
     debug_text.config(state=tk.DISABLED)
-
-    # Start the auto pairing agent in a background thread.
-    start_pairing_agent_thread()
 
     # Start the BLE GATT server for provisioning in a background thread.
     start_gatt_server_thread()

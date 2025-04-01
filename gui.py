@@ -12,7 +12,6 @@ qr_photo = None   # Global reference to the PhotoImage
 debug_messages = []  # List for debug messages
 
 def log_debug(message):
-    """Append a message to the debug log and update the debug text widget."""
     global debug_text
     debug_messages.append(message)
     # Limit log length to the last 10 messages.
@@ -23,10 +22,6 @@ def log_debug(message):
     print(message)  # Also print to console for additional debugging
 
 def start_ble_advertising():
-    """
-    Configure the Bluetooth adapter using btmgmt to advertise with the name "PixelPaperFrame".
-    Uses btmgmt commands to enable LE mode and advertising.
-    """
     try:
         log_debug("Starting BLE advertising using btmgmt...")
         

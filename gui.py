@@ -3,13 +3,25 @@ import tkinter as tk
 import socket
 import subprocess
 import time
-from bluezero import advertisement  # Bluezero API for BLE advertising
+import qrcode
+from PIL import Image, ImageTk
+import threading
 
-launched = False         # Flag to ensure we only launch once
-debug_messages = []      # List for debug messages
-ble_adv = None           # Global variable for the advertisement object
+# Bluezero imports for the GATT server
+from bluezero import adapter, peripheral
+
+# Global GUI variables and flags.
+launched = False          # Flag to ensure we only launch once
+qr_label = None           # Global widget for QR code display
+qr_photo = None           # Global reference to the PhotoImage
+debug_messages = []       # List for debug messages
+
+# UUIDs for our custom provisioning service and characteristic.
+PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
+PROVISIONING_CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
 
 def log_debug(message):
+    """Logs debug messages to the GUI text widget and prints them to console."""
     global debug_text
     debug_messages.append(message)
     # Limit log length to the last 10 messages.
@@ -17,47 +29,58 @@ def log_debug(message):
     debug_text.delete(1.0, tk.END)
     debug_text.insert(tk.END, "\n".join(debug_messages[-10:]))
     debug_text.config(state=tk.DISABLED)
-    print(message)  # Also print to console for debugging
-
-def start_gatt_server():
-    try:
-        log_debug("Starting GATT server using venv interpreter...")
-        # Launch the GATT server in the background using your venv interpreter.
-        subprocess.Popen([
-            "sudo",
-            "/home/orangepi/frame/venv/bin/python3",
-            "/home/orangepi/frame/gatt_server.py"
-        ])
-        log_debug("GATT server launched.")
-    except Exception as e:
-        log_debug("Failed to start GATT server: " + str(e))
+    print(message)
 
 def start_ble_advertising():
-    global ble_adv
+    """Starts BLE advertising using btmgmt commands."""
     try:
-        log_debug("Starting BLE advertising using BlueZ API (Bluezero)...")
-        # Create an advertisement for adapter hci0 as a peripheral.
-        ble_adv = advertisement.Advertisement(0, 'peripheral')
-        # Set the local name by assigning to the attribute.
-        ble_adv.local_name = "PixelPaper"
-        # Optionally include TX power in the advertisement.
-        ble_adv.include_tx_power = True
-        # Start (register) the advertisement with BlueZ.
-        ble_adv.start()
-        log_debug("BLE advertising registered via BlueZ API.")
+        log_debug("Starting BLE advertising using btmgmt...")
+        
+        # Enable LE mode.
+        result = subprocess.run(["sudo", "btmgmt", "le", "on"], capture_output=True, text=True)
+        if result.returncode == 0:
+            log_debug("btmgmt le on: SUCCESS")
+        else:
+            log_debug("btmgmt le on error: " + result.stderr.strip())
+
+        # Enable advertising.
+        result = subprocess.run(["sudo", "btmgmt", "advertising", "on"], capture_output=True, text=True)
+        if result.returncode == 0:
+            log_debug("btmgmt advertising on: SUCCESS")
+        else:
+            log_debug("btmgmt advertising on error: " + result.stderr.strip())
+        
+        # Wait a moment for the advertisement to stabilize.
+        log_debug("Waiting 3 seconds for BLE advertisement to stabilize...")
+        time.sleep(3)
+        
+        # Optionally, log the status via btmgmt info.
+        result = subprocess.run(["sudo", "btmgmt", "info"], capture_output=True, text=True)
+        log_debug("btmgmt info:\n" + result.stdout.strip())
+        
     except Exception as e:
         log_debug("Exception in start_ble_advertising: " + str(e))
 
 def check_wifi_connection():
-    """Attempt to connect to Google DNS to test for internet access."""
+    """Test for internet connectivity by connecting to Google DNS."""
     try:
         socket.create_connection(("8.8.8.8", 53), timeout=2)
         return True
     except OSError:
         return False
 
+def generate_qr_code():
+    """Generate a QR code image for Bluetooth provisioning."""
+    qr_data = "BT-CONNECT:frame-provisioning"  # Placeholder provisioning data
+    qr = qrcode.QRCode(version=1, box_size=10, border=4)
+    qr.add_data(qr_data)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    return img
+
 def update_status():
-    global launched
+    """Update GUI status: if WiFi is connected, launch browser; else, show QR code."""
+    global launched, qr_label, qr_photo
     connected = check_wifi_connection()
     if connected and not launched:
         label.config(text="WiFi Connected. Launching frame...")
@@ -74,12 +97,78 @@ def update_status():
         # Close the Tkinter GUI.
         root.destroy()
     elif not connected:
-        label.config(text="WiFi Not Connected. Waiting for connection...")
+        label.config(text="WiFi Not Connected. Waiting for connection...\nScan the QR code below for provisioning via Bluetooth.")
+        log_debug("WiFi not connected; displaying QR code.")
+        # Generate and display the QR code.
+        img = generate_qr_code()
+        qr_photo = ImageTk.PhotoImage(img)
+        if qr_label is None:
+            qr_label = tk.Label(root, image=qr_photo)
+            qr_label.image = qr_photo  # Keep a reference!
+            qr_label.pack(pady=20)
+        else:
+            qr_label.config(image=qr_photo)
+            qr_label.image = qr_photo
         # Re-check connection every 5 seconds.
         root.after(5000, update_status)
 
+# --- Bluezero GATT Server Functions ---
+
+def wifi_write_callback(value, options):
+    """
+    Write callback for our provisioning characteristic.
+    Called when a mobile app writes data to provision the frame.
+    'value' is a list of integers representing the bytes.
+    """
+    try:
+        credentials = bytes(value).decode('utf-8')
+        log_debug("Received WiFi credentials via BLE: " + credentials)
+        # Here you could add logic to update WiFi configuration.
+    except Exception as e:
+        log_debug("Error in wifi_write_callback: " + str(e))
+    return
+
+def start_gatt_server():
+    """Sets up and publishes a BLE GATT server for provisioning using Bluezero."""
+    try:
+        dongles = adapter.Adapter.available()
+        if not dongles:
+            log_debug("No Bluetooth adapters available for GATT server!")
+            return
+        # Use the first available adapter.
+        dongle_addr = list(dongles)[0].address
+        log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
+        
+        # Create a Peripheral object with a local name (e.g., "PixelPaper").
+        ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
+        # Add a custom provisioning service.
+        ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
+        # Add a write characteristic for WiFi provisioning.
+        ble_periph.add_characteristic(
+            srv_id=1,
+            chr_id=1,
+            uuid=PROVISIONING_CHAR_UUID,
+            value=[],  # Start with an empty value.
+            notifying=False,
+            flags=['write'],
+            write_callback=wifi_write_callback,
+            read_callback=None,
+            notify_callback=None
+        )
+        log_debug("Publishing GATT server for provisioning...")
+        ble_periph.publish()  # This call starts the peripheral event loop.
+    except Exception as e:
+        log_debug("Exception in start_gatt_server: " + str(e))
+
+def start_gatt_server_thread():
+    """Starts the GATT server in a background daemon thread."""
+    t = threading.Thread(target=start_gatt_server, daemon=True)
+    t.start()
+
+# --- Main GUI Setup ---
+
 if __name__ == '__main__':
-    # Set up the main window.
+    # Set up the main Tkinter window.
     root = tk.Tk()
     root.title("Frame Status")
     root.attributes('-fullscreen', True)
@@ -93,12 +182,12 @@ if __name__ == '__main__':
     debug_text.pack(fill=tk.X, side=tk.BOTTOM)
     debug_text.config(state=tk.DISABLED)
 
-    # Start the GATT server using your virtual environment.
-    start_gatt_server()
-
-    # Start BLE advertising using Bluezero.
+    # Start BLE advertising using btmgmt.
     start_ble_advertising()
+    
+    # Start the BLE GATT server for provisioning in a background thread.
+    start_gatt_server_thread()
 
-    # Start checking WiFi and update the GUI accordingly.
+    # Begin checking WiFi connection and updating the UI.
     update_status()
     root.mainloop()

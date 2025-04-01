@@ -103,7 +103,7 @@ def start_gatt_server():
             uuid=PROVISIONING_CHAR_UUID,
             value=[],  # Start with an empty value.
             notifying=False,
-            flags=['write', 'notify'],
+            flags=['write-without-response', 'notify'],
             write_callback=wifi_write_callback,
             read_callback=None,
             notify_callback=None

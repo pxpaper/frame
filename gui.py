@@ -12,6 +12,7 @@ qr_photo = None   # Global reference to the PhotoImage
 debug_messages = []  # List for debug messages
 
 def log_debug(message):
+    """Append a message to the debug log and update the debug text widget."""
     global debug_text
     debug_messages.append(message)
     # Limit log length to the last 10 messages.
@@ -20,6 +21,20 @@ def log_debug(message):
     debug_text.insert(tk.END, "\n".join(debug_messages[-10:]))
     debug_text.config(state=tk.DISABLED)
     print(message)  # Also print to console for additional debugging
+
+def start_gatt_server():
+    try:
+        log_debug("Starting GATT server using venv interpreter...")
+        # Use the full path to your virtual environment's python interpreter.
+        subprocess.Popen([
+            "sudo",
+            "/home/orangepi/frame/venv/bin/python3",
+            "/home/orangepi/frame/gatt_server.py"
+        ])
+        log_debug("GATT server launched.")
+    except Exception as e:
+        log_debug("Failed to start GATT server: " + str(e))
+
 
 def start_ble_advertising():
     try:
@@ -116,8 +131,10 @@ if __name__ == '__main__':
     debug_text.pack(fill=tk.X, side=tk.BOTTOM)
     debug_text.config(state=tk.DISABLED)
 
-    # Start BLE advertising using btmgmt.
-    start_ble_advertising()
+    # Start the GATT server using the virtual environment interpreter.
+    start_gatt_server()
 
+    # Continue with BLE advertising and status updates.
+    start_ble_advertising()
     update_status()
     root.mainloop()

@@ -28,7 +28,7 @@ def get_adapter_address():
         print("Error fetching adapter address:", e)
         return None
 
-# Define custom service and characteristic UUIDs.
+# Define your custom service and characteristic UUIDs.
 FRAME_SERVICE_UUID = '12345678-1234-5678-1234-56789abcdef0'
 FRAME_CHAR_UUID = '12345678-1234-5678-1234-56789abcdef1'
 
@@ -49,13 +49,13 @@ def write_callback(value, options):
     # TODO: Parse and store the received credentials.
     return
 
-# Create the Peripheral (GATT server) object.
-# Note: Pass the adapter address as the first argument.
-my_peripheral = peripheral.Peripheral(ADAPTER_ADDRESS,
-                                        local_name='PixelPaper',
-                                        service_uuids=[FRAME_SERVICE_UUID])
+# Create the Peripheral (GATT server) object with the adapter address and local name.
+my_peripheral = peripheral.Peripheral(ADAPTER_ADDRESS, local_name='PixelPaper')
 
-# Add a service and characteristic.
+# Add a service (srv_id=1) with the custom service UUID.
+my_peripheral.add_service(srv_id=1, uuid=FRAME_SERVICE_UUID, primary=True)
+
+# Add a characteristic (chr_id=1) with the custom characteristic UUID.
 my_peripheral.add_characteristic(srv_id=1,
                                  chr_id=1,
                                  uuid=FRAME_CHAR_UUID,

@@ -62,17 +62,14 @@ def update_status():
 def wifi_write_callback(value, options):
     """
     Write callback for our provisioning characteristic.
-    Called when a mobile app writes WiFi credentials via BLE.
+    Called when a mobile app writes WiFi credentials (or other commands) via BLE.
     'value' is a list of integers representing the bytes sent.
     """
     try:
         log_debug("wifi_write_callback triggered!")
         credentials = bytes(value).decode('utf-8')
-        log_debug("Received WiFi credentials via BLE: " + credentials)
-        # For debugging, send back a confirmation notification.
-        if provisioning_char is not None:
-            provisioning_char.set_value(b"Credentials Received")
-            log_debug("Sent confirmation notification.")
+        log_debug("Received data via BLE: " + credentials)
+        # No notification is sent back to avoid triggering pairing.
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
@@ -93,14 +90,14 @@ def start_gatt_server():
         ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
         # Add a custom provisioning service.
         ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
-        # Add a write+notify characteristic for WiFi provisioning.
+        # Add a write-only characteristic (allowing write without response).
         provisioning_char = ble_periph.add_characteristic(
             srv_id=1,
             chr_id=1,
             uuid=PROVISIONING_CHAR_UUID,
             value=[],  # Start with an empty value.
             notifying=False,
-            flags=['write', 'write-without-response', 'notify'],
+            flags=['write', 'write-without-response'],
             write_callback=wifi_write_callback,
             read_callback=None,
             notify_callback=None

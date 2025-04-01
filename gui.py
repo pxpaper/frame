@@ -7,16 +7,13 @@ import threading
 from bluezero import adapter, peripheral
 
 # Global GUI variables and flags.
-launched = False          # Flag to ensure we only launch once
+launched = False          # (Unused now but kept for legacy logic)
 debug_messages = []       # List for debug messages
 provisioning_char = None  # Global reference to our provisioning characteristic
-command_char = None       # Global reference to our command characteristic
 
-# UUIDs for our custom provisioning service and characteristics.
-# We use one service containing two characteristics.
+# UUIDs for our custom provisioning service and characteristic.
 PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 PROVISIONING_CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
-COMMAND_CHAR_UUID         = "abcdefab-cdef-1234-5678-abcdefabcdef"
 
 def log_debug(message):
     """Logs debug messages to the GUI text widget and prints them to console."""
@@ -42,12 +39,10 @@ def update_status():
     Update GUI status: if WiFi is connected, launch the browser;
     otherwise, display a waiting message.
     """
-    global launched
     connected = check_wifi_connection()
-    if connected and not launched:
+    if connected:
         label.config(text="WiFi Connected. Launching frame...")
         log_debug("WiFi connected, launching browser.")
-        launched = True
         subprocess.Popen([
             "chromium",
             "--noerrdialogs",
@@ -56,7 +51,7 @@ def update_status():
             "https://pixelpaper.com/frame.html"
         ])
         root.destroy()
-    elif not connected:
+    else:
         label.config(text="WiFi Not Connected. Waiting for connection...")
         root.after(5000, update_status)
 
@@ -64,42 +59,29 @@ def update_status():
 
 def wifi_write_callback(value, options):
     """
-    Write callback for the provisioning characteristic.
-    Called when a mobile app writes WiFi credentials via BLE.
+    Write callback for our provisioning characteristic.
+    Called when a mobile app writes data via BLE.
     'value' is a list of integers representing the bytes sent.
     """
     try:
         log_debug("wifi_write_callback triggered!")
-        credentials = bytes(value).decode('utf-8')
-        log_debug("Received WiFi credentials via BLE: " + credentials)
-        # For debugging, send back a confirmation notification on the provisioning characteristic.
-        if provisioning_char is not None:
+        received_text = bytes(value).decode('utf-8')
+        if received_text.startswith("WIFI:"):
+            log_debug("Received WiFi credentials: " + received_text)
+            # Process provisioning data if needed.
             provisioning_char.set_value(b"Credentials Received")
-            log_debug("Sent provisioning confirmation notification.")
+            log_debug("Sent provisioning confirmation.")
+        else:
+            log_debug("Received message: " + received_text)
+            provisioning_char.set_value(b"Message Received")
+            log_debug("Sent message confirmation.")
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
 
-def command_write_callback(value, options):
-    """
-    Write callback for the command characteristic.
-    Called when a mobile app sends a command (e.g. 'hello there') via BLE.
-    """
-    try:
-        log_debug("command_write_callback triggered!")
-        command_text = bytes(value).decode('utf-8')
-        log_debug("Received command via BLE: " + command_text)
-        # For debugging, send back a confirmation notification.
-        if command_char is not None:
-            command_char.set_value(b"Message Received")
-            log_debug("Sent command confirmation notification.")
-    except Exception as e:
-        log_debug("Error in command_write_callback: " + str(e))
-    return
-
 def start_gatt_server():
-    """Sets up and publishes a persistent BLE GATT server using Bluezero."""
-    global provisioning_char, command_char
+    """Sets up and publishes a BLE GATT server for provisioning using Bluezero."""
+    global provisioning_char
     try:
         dongles = adapter.Adapter.available()
         if not dongles:
@@ -109,14 +91,12 @@ def start_gatt_server():
         dongle_addr = list(dongles)[0].address
         log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
         
-        # Create a Peripheral object with a local name.
-        # Update the local_name to match what you want the mobile app to see.
+        # Create a Peripheral object with a local name (we set it to "PixelPaperFrame"
+        # for consistency with what nRF Connect shows).
         ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaperFrame")
-        
         # Add a custom provisioning service.
         ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
-        
-        # Add a write+notify provisioning characteristic.
+        # Add a write+notify characteristic for WiFi provisioning and messaging.
         provisioning_char = ble_periph.add_characteristic(
             srv_id=1,
             chr_id=1,
@@ -128,21 +108,7 @@ def start_gatt_server():
             read_callback=None,
             notify_callback=None
         )
-        
-        # Add a separate write+notify command characteristic.
-        command_char = ble_periph.add_characteristic(
-            srv_id=1,
-            chr_id=2,
-            uuid=COMMAND_CHAR_UUID,
-            value=[],  # Start empty.
-            notifying=False,
-            flags=['write-without-response', 'notify'],
-            write_callback=command_write_callback,
-            read_callback=None,
-            notify_callback=None
-        )
-        
-        log_debug("Publishing GATT server for provisioning and commands...")
+        log_debug("Publishing GATT server for provisioning...")
         ble_periph.publish()  # This call starts the peripheral event loop.
         log_debug("GATT server published successfully.")
     except Exception as e:
@@ -169,7 +135,7 @@ if __name__ == '__main__':
     debug_text.pack(fill=tk.X, side=tk.BOTTOM)
     debug_text.config(state=tk.DISABLED)
 
-    # Start the BLE GATT server in a background thread.
+    # Start the BLE GATT server for provisioning in a background thread.
     start_gatt_server_thread()
 
     # Begin checking WiFi connection and updating the UI.

@@ -75,7 +75,7 @@ def update_status():
         root.destroy()
     elif not connected:
         label.config(text="WiFi Not Connected. Waiting for connection...")
-        log_debug("WiFi not connected; still waiting.")
+        #log_debug("WiFi not connected; still waiting.")
         # Re-check connection every 5 seconds.
         root.after(5000, update_status)
 

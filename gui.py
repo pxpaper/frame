@@ -7,7 +7,7 @@ import threading
 from bluezero import adapter, peripheral
 
 # Global GUI variables and flags.
-launched = False          # (Unused now but kept for legacy logic)
+launched = False          # Flag to ensure we only launch once
 debug_messages = []       # List for debug messages
 provisioning_char = None  # Global reference to our provisioning characteristic
 
@@ -39,10 +39,12 @@ def update_status():
     Update GUI status: if WiFi is connected, launch the browser;
     otherwise, display a waiting message.
     """
+    global launched
     connected = check_wifi_connection()
-    if connected:
+    if connected and not launched:
         label.config(text="WiFi Connected. Launching frame...")
         log_debug("WiFi connected, launching browser.")
+        launched = True
         subprocess.Popen([
             "chromium",
             "--noerrdialogs",
@@ -51,8 +53,9 @@ def update_status():
             "https://pixelpaper.com/frame.html"
         ])
         root.destroy()
-    else:
+    elif not connected:
         label.config(text="WiFi Not Connected. Waiting for connection...")
+        #log_debug("WiFi not connected; waiting for connection...")
         root.after(5000, update_status)
 
 # --- Bluezero GATT Server Functions ---
@@ -60,21 +63,17 @@ def update_status():
 def wifi_write_callback(value, options):
     """
     Write callback for our provisioning characteristic.
-    Called when a mobile app writes data via BLE.
+    Called when a mobile app writes WiFi credentials via BLE.
     'value' is a list of integers representing the bytes sent.
     """
     try:
         log_debug("wifi_write_callback triggered!")
-        received_text = bytes(value).decode('utf-8')
-        if received_text.startswith("WIFI:"):
-            log_debug("Received WiFi credentials: " + received_text)
-            # Process provisioning data if needed.
+        credentials = bytes(value).decode('utf-8')
+        log_debug("Received WiFi credentials via BLE: " + credentials)
+        # For debugging, send back a confirmation notification.
+        if provisioning_char is not None:
             provisioning_char.set_value(b"Credentials Received")
-            log_debug("Sent provisioning confirmation.")
-        else:
-            log_debug("Received message: " + received_text)
-            provisioning_char.set_value(b"Message Received")
-            log_debug("Sent message confirmation.")
+            log_debug("Sent confirmation notification.")
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
@@ -91,19 +90,18 @@ def start_gatt_server():
         dongle_addr = list(dongles)[0].address
         log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
         
-        # Create a Peripheral object with a local name (we set it to "PixelPaperFrame"
-        # for consistency with what nRF Connect shows).
-        ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaperFrame")
+        # Create a Peripheral object with a local name (e.g., "PixelPaper").
+        ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
         # Add a custom provisioning service.
         ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
-        # Add a write+notify characteristic for WiFi provisioning and messaging.
+        # Add a write+notify characteristic for WiFi provisioning.
         provisioning_char = ble_periph.add_characteristic(
             srv_id=1,
             chr_id=1,
             uuid=PROVISIONING_CHAR_UUID,
             value=[],  # Start with an empty value.
             notifying=False,
-            flags=['write-without-response', 'notify'],
+            flags=['write', 'notify'],
             write_callback=wifi_write_callback,
             read_callback=None,
             notify_callback=None

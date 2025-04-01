@@ -171,7 +171,7 @@ if __name__ == '__main__':
     debug_text.config(state=tk.DISABLED)
 
     # Start BLE advertising using btmgmt.
-    start_ble_advertising()
+    #start_ble_advertising()
     
     # Start the BLE GATT server for provisioning in a background thread.
     start_gatt_server_thread()

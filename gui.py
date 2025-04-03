@@ -9,8 +9,6 @@ from bluezero import adapter, peripheral
 # Global GUI variables and flags.
 launched = False          # Flag to ensure we only launch once
 debug_messages = []       # List for debug messages
-# Global reference to our provisioning characteristic is no longer needed across loop iterations.
-# We'll simply publish our peripheral advertisement each time.
 
 # UUIDs for our custom provisioning service and characteristic.
 PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
@@ -63,14 +61,13 @@ def update_status():
 def wifi_write_callback(value, options):
     """
     Write callback for our provisioning characteristic.
-    Called when a mobile app writes WiFi credentials (or other commands) via BLE.
+    Called when a mobile app writes data via BLE.
     'value' is a list of integers representing the bytes sent.
     """
     try:
         log_debug("wifi_write_callback triggered!")
         credentials = bytes(value).decode('utf-8')
         log_debug("Received data via BLE: " + credentials)
-        # No notification is sent back in this example.
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
@@ -88,9 +85,7 @@ def start_gatt_server():
         
         # Create a Peripheral object with a local name (e.g., "PixelPaper").
         ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
-        # Add a custom provisioning service.
         ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
-        # Add a write-only characteristic (write and write-without-response).
         ble_periph.add_characteristic(
             srv_id=1,
             chr_id=1,
@@ -103,17 +98,27 @@ def start_gatt_server():
             notify_callback=None
         )
         log_debug("Publishing GATT server for provisioning...")
-        ble_periph.publish()  # This call blocks while the peripheral is running.
-        log_debug("GATT server publish() returned (connection lost or stopped).")
+        ble_periph.publish()  # This call blocks until the peripheral stops.
+        log_debug("GATT server publish() returned (likely due to disconnect).")
     except Exception as e:
         log_debug("Exception in start_gatt_server: " + str(e))
 
+def reset_adapter():
+    """Force a Bluetooth adapter reset using bluetoothctl."""
+    log_debug("Resetting Bluetooth adapter...")
+    subprocess.run(["sudo", "bluetoothctl", "power", "off"], capture_output=True)
+    time.sleep(1)
+    subprocess.run(["sudo", "bluetoothctl", "power", "on"], capture_output=True)
+    time.sleep(1)
+    log_debug("Bluetooth adapter reset complete.")
+
 def start_gatt_server_loop():
-    """Continuously run the GATT server so that advertisement resets when a connection ends."""
+    """Continuously run the GATT server; if it stops, reset the adapter and restart."""
     while True:
         start_gatt_server()
-        log_debug("GATT server stopped, restarting advertisement in 2 seconds...")
+        log_debug("GATT server stopped, waiting 2 seconds before reset...")
         time.sleep(2)
+        reset_adapter()
 
 def start_gatt_server_thread():
     """Starts the GATT server loop in a background daemon thread."""

@@ -10,7 +10,6 @@ from bluezero import adapter, peripheral
 launched = False          # Flag to ensure we only launch once
 debug_messages = []       # List for debug messages
 provisioning_char = None  # Global reference to our provisioning characteristic
-gatt_periph = None        # Global reference to the current Peripheral object
 
 # UUIDs for our custom provisioning service and characteristic.
 PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
@@ -67,29 +66,17 @@ def wifi_write_callback(value, options):
     'value' is a list of integers representing the bytes sent.
     """
     try:
-        received = bytes(value).decode('utf-8').strip()
         log_debug("wifi_write_callback triggered!")
-        log_debug("Received data via BLE: " + received)
-        # If the command is "DISCONNECT", then unpublish the GATT server.
-        if received.lower() == "disconnect":
-            log_debug("Disconnect command received.")
-            global gatt_periph
-            if gatt_periph:
-                try:
-                    gatt_periph.unpublish()
-                    log_debug("GATT server unpublished (disconnect simulated).")
-                except Exception as e:
-                    log_debug("Error unpublishing GATT server: " + str(e))
-            return
-        # Otherwise, process as normal provisioning data.
-        # (Your normal provisioning handling code goes here.)
+        credentials = bytes(value).decode('utf-8')
+        log_debug("Received data via BLE: " + credentials)
+        # No notification is sent back to avoid triggering pairing.
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
 
 def start_gatt_server():
     """Sets up and publishes a BLE GATT server for provisioning using Bluezero."""
-    global provisioning_char, gatt_periph
+    global provisioning_char
     try:
         dongles = adapter.Adapter.available()
         if not dongles:
@@ -100,16 +87,11 @@ def start_gatt_server():
         log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
         
         # Create a Peripheral object with a local name (e.g., "PixelPaper").
-        periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
-        # Assign to our global variable.
-        gatt_periph = periph
-        
-        # (Optional) Set connection callbacks here if needed.
-        
+        ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
         # Add a custom provisioning service.
-        periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
-        # Add a write-only characteristic (write without response).
-        provisioning_char = periph.add_characteristic(
+        ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
+        # Add a write-only characteristic (allowing write without response).
+        provisioning_char = ble_periph.add_characteristic(
             srv_id=1,
             chr_id=1,
             uuid=PROVISIONING_CHAR_UUID,
@@ -121,25 +103,14 @@ def start_gatt_server():
             notify_callback=None
         )
         log_debug("Publishing GATT server for provisioning...")
-        periph.publish()  # This call blocks while the peripheral is active.
+        ble_periph.publish()  # This call starts the peripheral event loop.
         log_debug("GATT server published successfully.")
     except Exception as e:
         log_debug("Exception in start_gatt_server: " + str(e))
 
-def run_gatt_server():
-    """
-    Wrap the GATT server in a loop so that when a connection is terminated
-    (or the peripheral is unpublished), it will re-publish after a delay.
-    """
-    while True:
-        log_debug("Starting GATT server...")
-        start_gatt_server()
-        log_debug("GATT server stopped. Restarting in 5 seconds...")
-        time.sleep(5)
-
 def start_gatt_server_thread():
-    """Starts the run_gatt_server function in a background daemon thread."""
-    t = threading.Thread(target=run_gatt_server, daemon=True)
+    """Starts the GATT server in a background daemon thread."""
+    t = threading.Thread(target=start_gatt_server, daemon=True)
     t.start()
 
 # --- Main GUI Setup ---

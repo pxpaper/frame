@@ -9,7 +9,8 @@ from bluezero import adapter, peripheral
 # Global GUI variables and flags.
 launched = False          # Flag to ensure we only launch once
 debug_messages = []       # List for debug messages
-provisioning_char = None  # Global reference to our provisioning characteristic
+# Global reference to our provisioning characteristic is no longer needed across loop iterations.
+# We'll simply publish our peripheral advertisement each time.
 
 # UUIDs for our custom provisioning service and characteristic.
 PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
@@ -69,14 +70,13 @@ def wifi_write_callback(value, options):
         log_debug("wifi_write_callback triggered!")
         credentials = bytes(value).decode('utf-8')
         log_debug("Received data via BLE: " + credentials)
-        # No notification is sent back to avoid triggering pairing.
+        # No notification is sent back in this example.
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
 
 def start_gatt_server():
     """Sets up and publishes a BLE GATT server for provisioning using Bluezero."""
-    global provisioning_char
     try:
         dongles = adapter.Adapter.available()
         if not dongles:
@@ -90,8 +90,8 @@ def start_gatt_server():
         ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
         # Add a custom provisioning service.
         ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
-        # Add a write-only characteristic (allowing write without response).
-        provisioning_char = ble_periph.add_characteristic(
+        # Add a write-only characteristic (write and write-without-response).
+        ble_periph.add_characteristic(
             srv_id=1,
             chr_id=1,
             uuid=PROVISIONING_CHAR_UUID,
@@ -103,14 +103,21 @@ def start_gatt_server():
             notify_callback=None
         )
         log_debug("Publishing GATT server for provisioning...")
-        ble_periph.publish()  # This call starts the peripheral event loop.
-        log_debug("GATT server published successfully.")
+        ble_periph.publish()  # This call blocks while the peripheral is running.
+        log_debug("GATT server publish() returned (connection lost or stopped).")
     except Exception as e:
         log_debug("Exception in start_gatt_server: " + str(e))
 
+def start_gatt_server_loop():
+    """Continuously run the GATT server so that advertisement resets when a connection ends."""
+    while True:
+        start_gatt_server()
+        log_debug("GATT server stopped, restarting advertisement in 2 seconds...")
+        time.sleep(2)
+
 def start_gatt_server_thread():
-    """Starts the GATT server in a background daemon thread."""
-    t = threading.Thread(target=start_gatt_server, daemon=True)
+    """Starts the GATT server loop in a background daemon thread."""
+    t = threading.Thread(target=start_gatt_server_loop, daemon=True)
     t.start()
 
 # --- Main GUI Setup ---
@@ -129,7 +136,7 @@ if __name__ == '__main__':
     debug_text.pack(fill=tk.X, side=tk.BOTTOM)
     debug_text.config(state=tk.DISABLED)
 
-    # Start the BLE GATT server for provisioning in a background thread.
+    # Start the BLE GATT server loop in a background thread.
     start_gatt_server_thread()
 
     # Begin checking WiFi connection and updating the UI.

@@ -10,6 +10,7 @@ from bluezero import adapter, peripheral
 launched = False          # Flag to ensure we only launch once
 debug_messages = []       # List for debug messages
 provisioning_char = None  # Global reference to our provisioning characteristic
+gatt_periph = None        # Global reference to the current Peripheral object
 
 # UUIDs for our custom provisioning service and characteristic.
 PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
@@ -25,14 +26,6 @@ def log_debug(message):
     debug_text.insert(tk.END, "\n".join(debug_messages[-10:]))
     debug_text.config(state=tk.DISABLED)
     print(message)
-
-# Callback for when a device connects.
-def on_connect_callback(device):
-    log_debug("Device connected: " + str(device.address))
-
-# Callback for when a device disconnects.
-def on_disconnect_callback(adapter_address, device_address):
-    log_debug("Device disconnected: " + device_address)
 
 def check_wifi_connection():
     """Test for internet connectivity by connecting to Google DNS."""
@@ -74,17 +67,29 @@ def wifi_write_callback(value, options):
     'value' is a list of integers representing the bytes sent.
     """
     try:
+        received = bytes(value).decode('utf-8').strip()
         log_debug("wifi_write_callback triggered!")
-        credentials = bytes(value).decode('utf-8')
-        log_debug("Received data via BLE: " + credentials)
-        # No notification is sent back to avoid triggering pairing.
+        log_debug("Received data via BLE: " + received)
+        # If the command is "DISCONNECT", then unpublish the GATT server.
+        if received.lower() == "disconnect":
+            log_debug("Disconnect command received.")
+            global gatt_periph
+            if gatt_periph:
+                try:
+                    gatt_periph.unpublish()
+                    log_debug("GATT server unpublished (disconnect simulated).")
+                except Exception as e:
+                    log_debug("Error unpublishing GATT server: " + str(e))
+            return
+        # Otherwise, process as normal provisioning data.
+        # (Your normal provisioning handling code goes here.)
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
 
 def start_gatt_server():
     """Sets up and publishes a BLE GATT server for provisioning using Bluezero."""
-    global provisioning_char
+    global provisioning_char, gatt_periph
     try:
         dongles = adapter.Adapter.available()
         if not dongles:
@@ -95,15 +100,16 @@ def start_gatt_server():
         log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
         
         # Create a Peripheral object with a local name (e.g., "PixelPaper").
-        ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
-        # Set the connection callbacks.
-        ble_periph.on_connect = on_connect_callback
-        ble_periph.on_disconnect = on_disconnect_callback
+        periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
+        # Assign to our global variable.
+        gatt_periph = periph
+        
+        # (Optional) Set connection callbacks here if needed.
         
         # Add a custom provisioning service.
-        ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
-        # Add a write-only characteristic (allowing write without response).
-        provisioning_char = ble_periph.add_characteristic(
+        periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
+        # Add a write-only characteristic (write without response).
+        provisioning_char = periph.add_characteristic(
             srv_id=1,
             chr_id=1,
             uuid=PROVISIONING_CHAR_UUID,
@@ -115,15 +121,15 @@ def start_gatt_server():
             notify_callback=None
         )
         log_debug("Publishing GATT server for provisioning...")
-        ble_periph.publish()  # This call starts the peripheral event loop and blocks.
+        periph.publish()  # This call blocks while the peripheral is active.
         log_debug("GATT server published successfully.")
     except Exception as e:
         log_debug("Exception in start_gatt_server: " + str(e))
 
 def run_gatt_server():
     """
-    Wrap the GATT server in a loop so that when a connection is terminated,
-    it will re-publish after a delay.
+    Wrap the GATT server in a loop so that when a connection is terminated
+    (or the peripheral is unpublished), it will re-publish after a delay.
     """
     while True:
         log_debug("Starting GATT server...")

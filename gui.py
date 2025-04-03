@@ -69,44 +69,48 @@ def wifi_write_callback(value, options):
         log_debug("wifi_write_callback triggered!")
         credentials = bytes(value).decode('utf-8')
         log_debug("Received data via BLE: " + credentials)
-        # No notification is sent back to avoid triggering pairing.
+        # No notification is sent back in this version.
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
 
 def start_gatt_server():
-    """Sets up and publishes a BLE GATT server for provisioning using Bluezero."""
+    """Continuously sets up and publishes a BLE GATT server for provisioning."""
     global provisioning_char
-    try:
-        dongles = adapter.Adapter.available()
-        if not dongles:
-            log_debug("No Bluetooth adapters available for GATT server!")
-            return
-        # Use the first available adapter.
-        dongle_addr = list(dongles)[0].address
-        log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
-        
-        # Create a Peripheral object with a local name (e.g., "PixelPaper").
-        ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
-        # Add a custom provisioning service.
-        ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
-        # Add a write-only characteristic (allowing write without response).
-        provisioning_char = ble_periph.add_characteristic(
-            srv_id=1,
-            chr_id=1,
-            uuid=PROVISIONING_CHAR_UUID,
-            value=[],  # Start with an empty value.
-            notifying=False,
-            flags=['write', 'write-without-response'],
-            write_callback=wifi_write_callback,
-            read_callback=None,
-            notify_callback=None
-        )
-        log_debug("Publishing GATT server for provisioning...")
-        ble_periph.publish()  # This call starts the peripheral event loop.
-        log_debug("GATT server published successfully.")
-    except Exception as e:
-        log_debug("Exception in start_gatt_server: " + str(e))
+    while True:
+        try:
+            dongles = adapter.Adapter.available()
+            if not dongles:
+                log_debug("No Bluetooth adapters available for GATT server!")
+                time.sleep(5)
+                continue
+            # Use the first available adapter.
+            dongle_addr = list(dongles)[0].address
+            log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
+            
+            # Create a Peripheral object with a local name (e.g., "PixelPaper").
+            ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
+            # Add a custom provisioning service.
+            ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
+            # Add a write-only characteristic (write without response).
+            provisioning_char = ble_periph.add_characteristic(
+                srv_id=1,
+                chr_id=1,
+                uuid=PROVISIONING_CHAR_UUID,
+                value=[],  # Start with an empty value.
+                notifying=False,
+                flags=['write', 'write-without-response'],
+                write_callback=wifi_write_callback,
+                read_callback=None,
+                notify_callback=None
+            )
+            log_debug("Publishing GATT server for provisioning...")
+            ble_periph.publish()  # This call blocks until the peripheral event loop stops.
+            log_debug("GATT server event loop ended (likely due to disconnection).")
+        except Exception as e:
+            log_debug("Exception in start_gatt_server: " + str(e))
+        log_debug("Restarting GATT server in 5 seconds...")
+        time.sleep(5)
 
 def start_gatt_server_thread():
     """Starts the GATT server in a background daemon thread."""

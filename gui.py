@@ -1,3 +1,35 @@
+#!/usr/bin/env python3
+import tkinter as tk
+import socket
+import subprocess
+import time
+import threading
+from bluezero import adapter, peripheral
+
+# Global GUI variables and flags.
+launched = False          # Flag to ensure we only launch once
+debug_messages = []       # List for debug messages
+provisioning_char = None  # Global reference to our provisioning characteristic
+
+# UUIDs for our custom provisioning service and characteristic.
+PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
+PROVISIONING_CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
+
+def get_serial_number():
+    # For many Orange Pi boards, the serial number is in /proc/device-tree/serial-number
+    try:
+        with open('/proc/device-tree/serial-number', 'r') as f:
+            serial = f.read().strip('\x00\n ')
+            if serial:
+                return serial
+    except Exception:
+        pass
+    return "unknown"
+
+
+
+
+
 
 
 #!/usr/bin/env python3

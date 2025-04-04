@@ -1,3 +1,5 @@
+
+
 #!/usr/bin/env python3
 import tkinter as tk
 import socket
@@ -7,13 +9,15 @@ import threading
 from bluezero import adapter, peripheral
 
 def get_serial_number():
+    # For many Orange Pi boards, the serial number is in /proc/device-tree/serial-number
     try:
-        with open('/proc/cpuinfo', 'r') as f:
-            for line in f:
-                if line.startswith("Serial"):
-                    return line.split(":")[1].strip()
-    except Exception as e:
-        return "unknown"
+        with open('/proc/device-tree/serial-number', 'r') as f:
+            serial = f.read().strip('\x00\n ')
+            if serial:
+                return serial
+    except Exception:
+        pass
+    return "unknown"
 
 # Global GUI variables and flags.
 launched = False          

@@ -16,17 +16,14 @@ PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 PROVISIONING_CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
 
 def get_serial_number():
-    """
-    Attempts to retrieve a unique serial number from the system.
-    Adjust this function as needed for your hardware.
-    """
+    # For many Orange Pi boards, the serial number is in /proc/device-tree/serial-number
     try:
-        with open('/proc/cpuinfo', 'r') as f:
-            for line in f:
-                if line.startswith("Serial"):
-                    return line.split(":")[1].strip()
-    except Exception as e:
-        return "unknown"
+        with open('/proc/device-tree/serial-number', 'r') as f:
+            serial = f.read().strip('\x00\n ')
+            if serial:
+                return serial
+    except Exception:
+        pass
     return "unknown"
 
 def log_debug(message):
@@ -83,7 +80,7 @@ def wifi_write_callback(value, options):
         log_debug("wifi_write_callback triggered!")
         credentials = bytes(value).decode('utf-8')
         log_debug("Received data via BLE: " + credentials)
-        # In this version, no notification is sent back.
+        # No notification is sent back in this version.
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
@@ -101,7 +98,6 @@ def start_gatt_server():
                 log_debug("No Bluetooth adapters available for GATT server!")
                 time.sleep(5)
                 continue
-            # Use the first available adapter.
             dongle_addr = list(dongles)[0].address
             serial = get_serial_number()
             log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
@@ -122,7 +118,7 @@ def start_gatt_server():
                 notify_callback=None
             )
             log_debug("Publishing GATT server for provisioning...")
-            ble_periph.publish()  # This blocks until the peripheral event loop stops.
+            ble_periph.publish()  # This call blocks until the peripheral event loop stops.
             log_debug("GATT server event loop ended (likely due to disconnection).")
         except Exception as e:
             log_debug("Exception in start_gatt_server: " + str(e))

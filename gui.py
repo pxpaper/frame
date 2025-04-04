@@ -46,10 +46,6 @@ def check_wifi_connection():
         return False
 
 def update_status():
-    """
-    Update GUI status: if WiFi is connected, launch the browser;
-    otherwise, display a waiting message.
-    """
     global launched
     connected = check_wifi_connection()
     if connected and not launched:
@@ -68,8 +64,6 @@ def update_status():
         label.config(text="WiFi Not Connected. Waiting for connection...")
         root.after(5000, update_status)
 
-# --- Bluezero GATT Server Functions ---
-
 def wifi_write_callback(value, options):
     """
     Write callback for our provisioning characteristic.
@@ -80,7 +74,6 @@ def wifi_write_callback(value, options):
         log_debug("wifi_write_callback triggered!")
         credentials = bytes(value).decode('utf-8')
         log_debug("Received data via BLE: " + credentials)
-        # No notification is sent back in this version.
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
@@ -102,9 +95,13 @@ def start_gatt_server():
             serial = get_serial_number()
             log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
             log_debug("Device serial: " + serial)
+            # Prepare manufacturer data: prepend "PX" to the serial, then encode as hex with "0x" prefix.
+            manufacturer_string = "PX" + serial
+            manufacturer_hex = "0x" + manufacturer_string.encode("utf-8").hex()
+            log_debug("Manufacturer data: " + manufacturer_hex)
             
-            # Create a Peripheral with a local name that includes the serial number.
-            ble_periph = peripheral.Peripheral(dongle_addr, local_name=f"PixelPaper-{serial}")
+            # Create a Peripheral with a constant local name and include manufacturer data.
+            ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper", manufacturer_data=manufacturer_hex)
             ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
             provisioning_char = ble_periph.add_characteristic(
                 srv_id=1,
@@ -126,29 +123,19 @@ def start_gatt_server():
         time.sleep(5)
 
 def start_gatt_server_thread():
-    """Starts the GATT server in a background daemon thread."""
     t = threading.Thread(target=start_gatt_server, daemon=True)
     t.start()
 
 # --- Main GUI Setup ---
-
 if __name__ == '__main__':
     root = tk.Tk()
     root.title("Frame Status")
     root.attributes('-fullscreen', True)
-
-    # Main status label.
     label = tk.Label(root, text="Checking WiFi...", font=("Helvetica", 48))
     label.pack(expand=True)
-
-    # Text widget for visual debugging.
     debug_text = tk.Text(root, height=10, bg="#f0f0f0")
     debug_text.pack(fill=tk.X, side=tk.BOTTOM)
     debug_text.config(state=tk.DISABLED)
-
-    # Start the BLE GATT server for provisioning in a background thread.
     start_gatt_server_thread()
-
-    # Begin checking WiFi connection and updating the UI.
     update_status()
     root.mainloop()

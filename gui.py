@@ -73,14 +73,13 @@ def update_status():
 def wifi_write_callback(value, options):
     """
     Write callback for our provisioning characteristic.
-    Called when a mobile app writes WiFi credentials (or other commands) via BLE.
+    Called when a mobile app writes WiFi credentials via BLE.
     'value' is a list of integers representing the bytes sent.
     """
     try:
         log_debug("wifi_write_callback triggered!")
         credentials = bytes(value).decode('utf-8')
         log_debug("Received data via BLE: " + credentials)
-        # (No notification is sent back in this version.)
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
@@ -103,7 +102,7 @@ def start_gatt_server():
             log_debug("Using Bluetooth adapter: " + dongle_addr)
             log_debug("Device serial: " + serial)
             
-            # Create a Peripheral object with a local name "PixelPaper" (name is now generic).
+            # Create a Peripheral object with a generic name.
             ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
             ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
             provisioning_char = ble_periph.add_characteristic(
@@ -120,15 +119,22 @@ def start_gatt_server():
             # Create and register a custom advertisement with manufacturer data.
             # Prepend "PX" to the serial.
             advert = advertisement.Advertisement(0, 'peripheral')
-            advert.local_name = "PixelPaper"  # This will be generic.
+            advert.local_name = "PixelPaper"
             manuf_data_str = "PX" + serial
-            # Use manufacturer id 0xFFFF as an example.
             advert.manufacturer_data = {0xFFFF: bytearray(manuf_data_str, 'utf-8')}
-            advert.register()
+            try:
+                advert.register()
+            except Exception as e:
+                log_debug("Advertisement registration error: " + str(e) + " - Attempting unregister/re-register.")
+                try:
+                    advert.unregister()
+                except Exception as inner_e:
+                    log_debug("Unregister failed: " + str(inner_e))
+                advert.register()
             log_debug("Advertisement registered with manufacturer data: " + manuf_data_str)
             
             log_debug("Publishing GATT server for provisioning...")
-            ble_periph.publish()  # Blocks until the event loop stops.
+            ble_periph.publish()  # Blocks until the peripheral event loop stops.
             log_debug("GATT server event loop ended (likely due to disconnection).")
         except Exception as e:
             log_debug("Exception in start_gatt_server: " + str(e))

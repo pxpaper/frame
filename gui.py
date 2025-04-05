@@ -16,7 +16,7 @@ PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 PROVISIONING_CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
 
 def get_serial_number():
-    # For many Orange Pi boards, the serial number is in /proc/device-tree/serial-number
+    """Return the board's serial number from /proc/device-tree/serial-number."""
     try:
         with open('/proc/device-tree/serial-number', 'r') as f:
             serial = f.read().strip('\x00\n ')
@@ -68,18 +68,40 @@ def update_status():
         label.config(text="WiFi Not Connected. Waiting for connection...")
         root.after(5000, update_status)
 
-# --- Bluezero GATT Server and Advertisement Functions ---
+# --- Bluezero Advertisement ---
+
+def start_advertisement():
+    """
+    Creates and registers an advertisement that includes manufacturer data.
+    The manufacturer data contains the serial number, prepended with "PX".
+    """
+    try:
+        serial = get_serial_number()
+        # Prepend "PX" to the serial.
+        mfg_data = bytearray("PX" + serial, 'utf-8')
+        # Create an advertisement object.
+        ad = advertisement.Advertisement('peripheral')
+        ad.local_name = "PixelPaper"
+        ad.manufacturer_data = {0xFFFF: mfg_data}  # Using 0xFFFF as an example manufacturer ID.
+        ad.service_UUIDs = [PROVISIONING_SERVICE_UUID]
+        ad.register()
+        log_debug("Advertisement registered with manufacturer data: PX" + serial)
+    except Exception as e:
+        log_debug("Advertisement error: " + str(e))
+
+# --- Bluezero GATT Server Functions ---
 
 def wifi_write_callback(value, options):
     """
     Write callback for our provisioning characteristic.
-    Called when a mobile app writes WiFi credentials via BLE.
+    Called when a mobile app writes WiFi credentials (or other commands) via BLE.
     'value' is a list of integers representing the bytes sent.
     """
     try:
         log_debug("wifi_write_callback triggered!")
         credentials = bytes(value).decode('utf-8')
         log_debug("Received data via BLE: " + credentials)
+        # No notification is sent back in this version.
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
@@ -98,11 +120,9 @@ def start_gatt_server():
                 time.sleep(5)
                 continue
             dongle_addr = list(dongles)[0].address
-            serial = get_serial_number()
-            log_debug("Using Bluetooth adapter: " + dongle_addr)
-            log_debug("Device serial: " + serial)
+            log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
             
-            # Create a Peripheral object with a generic name.
+            # Create a Peripheral object with a fixed local name.
             ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
             ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
             provisioning_char = ble_periph.add_characteristic(
@@ -116,25 +136,8 @@ def start_gatt_server():
                 read_callback=None,
                 notify_callback=None
             )
-            # Create and register a custom advertisement with manufacturer data.
-            # Prepend "PX" to the serial.
-            advert = advertisement.Advertisement(0, 'peripheral')
-            advert.local_name = "PixelPaper"
-            manuf_data_str = "PX" + serial
-            advert.manufacturer_data = {0xFFFF: bytearray(manuf_data_str, 'utf-8')}
-            try:
-                advert.register()
-            except Exception as e:
-                log_debug("Advertisement registration error: " + str(e) + " - Attempting unregister/re-register.")
-                try:
-                    advert.unregister()
-                except Exception as inner_e:
-                    log_debug("Unregister failed: " + str(inner_e))
-                advert.register()
-            log_debug("Advertisement registered with manufacturer data: " + manuf_data_str)
-            
             log_debug("Publishing GATT server for provisioning...")
-            ble_periph.publish()  # Blocks until the peripheral event loop stops.
+            ble_periph.publish()  # This call blocks until the peripheral event loop stops.
             log_debug("GATT server event loop ended (likely due to disconnection).")
         except Exception as e:
             log_debug("Exception in start_gatt_server: " + str(e))
@@ -161,6 +164,9 @@ if __name__ == '__main__':
     debug_text = tk.Text(root, height=10, bg="#f0f0f0")
     debug_text.pack(fill=tk.X, side=tk.BOTTOM)
     debug_text.config(state=tk.DISABLED)
+
+    # Start the advertisement (with separate serial in manufacturer data).
+    start_advertisement()
 
     # Start the BLE GATT server for provisioning in a background thread.
     start_gatt_server_thread()

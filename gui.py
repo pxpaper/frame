@@ -11,13 +11,10 @@ launched = False          # Flag to ensure we only launch once
 debug_messages = []       # List for debug messages
 provisioning_char = None  # Global reference to our provisioning characteristic
 
-# New constants for serial number.
-SERIAL_NUMBER = "1234567890"  # Replace with your device's serial number if available
-SERIAL_CHAR_UUID = "abcdefab-cdef-abcdef-abcd-abcdefabcdef"
-
-# UUIDs for our custom provisioning service and characteristic.
+# UUIDs for our custom provisioning service and characteristics.
 PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 PROVISIONING_CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
+SERIAL_CHAR_UUID          = "12345678-1234-5678-1234-56789abcdef2"  # New characteristic for serial
 
 def log_debug(message):
     """Logs debug messages to the GUI text widget and prints them to console."""
@@ -30,6 +27,22 @@ def log_debug(message):
     debug_text.config(state=tk.DISABLED)
     print(message)
 
+def get_serial():
+    """Reads the serial number from the device tree and prepends 'PX'."""
+    try:
+        with open('/proc/device-tree/serial-number', 'r') as f:
+            serial = f.read().strip('\x00').strip()
+            if serial:
+                return "PX" + serial
+    except Exception as e:
+        log_debug("Error reading serial: " + str(e))
+    return "PXUNKNOWN"
+
+def serial_read_callback(options):
+    """Read callback for the serial number characteristic."""
+    serial = get_serial()
+    return list(serial.encode('utf-8'))
+
 def check_wifi_connection():
     """Test for internet connectivity by connecting to Google DNS."""
     try:
@@ -40,9 +53,9 @@ def check_wifi_connection():
 
 def update_status():
     """
-    Update GUI status: if WiFi is connected, launch the browser;
+    Update GUI status: if WiFi is connected, launch Chromium;
     otherwise, display a waiting message.
-    Always keep the GUI (and Bluetooth functionality) running.
+    Always keep the Bluetooth functionality running.
     """
     global launched
     connected = check_wifi_connection()
@@ -57,12 +70,11 @@ def update_status():
             "--kiosk",
             "https://pixelpaper.com/frame.html"
         ])
-        # Do NOT destroy the GUI so that Bluetooth remains active.
+        # Instead of destroying the GUI, withdraw it so the process remains alive.
+        root.withdraw()
     elif not connected:
         label.config(text="WiFi Not Connected. Waiting for connection...")
     root.after(5000, update_status)
-
-# --- Bluezero GATT Server Functions ---
 
 def wifi_write_callback(value, options):
     """
@@ -78,15 +90,6 @@ def wifi_write_callback(value, options):
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
-
-def serial_read_callback(options):
-    """
-    Read callback for the serial characteristic.
-    Returns the serial number (prefixed with "PX") as a list of byte values.
-    """
-    serial_str = "PX" + SERIAL_NUMBER
-    # Convert each character to its integer ASCII value.
-    return [ord(c) for c in serial_str]
 
 def start_gatt_server():
     """Continuously sets up and publishes a BLE GATT server for provisioning."""
@@ -123,15 +126,15 @@ def start_gatt_server():
                 srv_id=1,
                 chr_id=2,
                 uuid=SERIAL_CHAR_UUID,
-                value=[],  # Not used since read_callback is provided.
+                value=[],  # Value is provided via read_callback.
                 notifying=False,
                 flags=['read'],
                 read_callback=serial_read_callback,
                 write_callback=None,
                 notify_callback=None
             )
-            log_debug("Publishing GATT server for provisioning (with serial characteristic)...")
-            ble_periph.publish()  # This call blocks until the peripheral event loop stops.
+            log_debug("Publishing GATT server for provisioning...")
+            ble_periph.publish()  # Blocks until the peripheral event loop stops.
             log_debug("GATT server event loop ended (likely due to disconnection).")
         except Exception as e:
             log_debug("Exception in start_gatt_server: " + str(e))
@@ -142,8 +145,6 @@ def start_gatt_server_thread():
     """Starts the GATT server in a background daemon thread."""
     t = threading.Thread(target=start_gatt_server, daemon=True)
     t.start()
-
-# --- Main GUI Setup ---
 
 if __name__ == '__main__':
     root = tk.Tk()

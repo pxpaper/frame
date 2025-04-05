@@ -61,7 +61,7 @@ def update_status():
             "--kiosk",
             "https://pixelpaper.com/frame.html"
         ])
-        # Do not destroy the GUI so that BLE remains active.
+        # Do not destroy GUI so BLE stays active.
     elif not connected:
         label.config(text="WiFi Not Connected. Waiting for connection...")
     root.after(5000, update_status)
@@ -101,20 +101,19 @@ def start_gatt_server():
             ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
             # Add a custom provisioning service.
             ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
-            # Add the provisioning characteristic with flags 'write', 'write-without-response' and 'read'
-            # and a dummy read_callback to ensure write_callback is triggered.
+            # Add a write-only characteristic for provisioning.
             provisioning_char = ble_periph.add_characteristic(
                 srv_id=1,
                 chr_id=1,
                 uuid=PROVISIONING_CHAR_UUID,
                 value=[],  # Start with an empty value.
                 notifying=False,
-                flags=['write', 'write-without-response', 'read'],
+                flags=['write'],  # Only 'write' flag.
                 write_callback=wifi_write_callback,
-                read_callback=lambda options: [],
+                read_callback=None,
                 notify_callback=None
             )
-            # Add a read-only serial characteristic containing the serial number.
+            # Add a read-only serial characteristic.
             ble_periph.add_characteristic(
                 srv_id=1,
                 chr_id=2,
@@ -145,19 +144,19 @@ if __name__ == '__main__':
     root = tk.Tk()
     root.title("Frame Status")
     root.attributes('-fullscreen', True)
-    
+
     # Main status label.
     label = tk.Label(root, text="Checking WiFi...", font=("Helvetica", 48))
     label.pack(expand=True)
-    
+
     # Text widget for visual debugging.
     debug_text = tk.Text(root, height=10, bg="#f0f0f0")
     debug_text.pack(fill=tk.X, side=tk.BOTTOM)
     debug_text.config(state=tk.DISABLED)
-    
+
     # Always start the BLE GATT server.
     start_gatt_server_thread()
-    
+
     # Begin checking WiFi connection and updating the UI.
     update_status()
     root.mainloop()

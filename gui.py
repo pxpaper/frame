@@ -10,6 +10,7 @@ from bluezero import adapter, peripheral, advertisement
 launched = False          # Flag to ensure we only launch Chromium once
 debug_messages = []       # List for debug messages
 provisioning_char = None  # Global reference to our provisioning characteristic
+adv_obj = None            # Global advertisement object
 
 # UUIDs for our custom provisioning service and characteristic.
 PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
@@ -50,23 +51,23 @@ def check_wifi_connection():
 
 def update_status():
     """
-    Update GUI status continuously.
-    If WiFi is connected and Chromium hasn't been launched yet,
-    launch Chromium in kiosk mode while leaving the GUI and Bluetooth services running.
+    Update GUI status: if WiFi is connected, launch Chromium in kiosk mode;
+    otherwise, display a waiting message.
     """
     global launched
-    if check_wifi_connection():
+    connected = check_wifi_connection()
+    if connected and not launched:
         label.config(text="WiFi Connected. Launching frame...")
-        if not launched:
-            log_debug("WiFi connected, launching browser.")
-            launched = True
-            subprocess.Popen([
-                "chromium",
-                "--noerrdialogs",
-                "--disable-infobars",
-                "--kiosk",
-                "https://pixelpaper.com/frame.html"
-            ])
+        log_debug("WiFi connected, launching browser.")
+        launched = True
+        subprocess.Popen([
+            "chromium",
+            "--noerrdialogs",
+            "--disable-infobars",
+            "--kiosk",
+            "https://pixelpaper.com/frame.html"
+        ])
+        # Note: We do NOT destroy the GUI so that Bluetooth remains active.
     else:
         label.config(text="WiFi Not Connected. Waiting for connection...")
     root.after(5000, update_status)
@@ -77,22 +78,27 @@ def start_advertisement():
     """
     Creates and registers an advertisement that includes manufacturer data.
     The manufacturer data contains the custom serial (prepended with "PX").
+    Only registers the advertisement once.
     """
+    global adv_obj
+    if adv_obj is not None:
+        log_debug("Advertisement already registered, skipping.")
+        return
     try:
         serial = get_serial_number()
         custom_serial = "PX" + serial
         # Convert the custom serial string into a list of bytes.
         mfg_data = list(custom_serial.encode('utf-8'))
         # Create an Advertisement with advert_id 1 and type "peripheral".
-        ad = advertisement.Advertisement(1, "peripheral")
-        ad.local_name = "PixelPaper"  # Keep the local name simple.
+        adv_obj = advertisement.Advertisement(1, "peripheral")
+        adv_obj.local_name = "PixelPaper"  # Set a simple local name.
         # Set manufacturer data using an example Company ID (0xFFFF).
-        ad.manufacturer_data = {0xFFFF: mfg_data}
-        ad.service_UUIDs = [PROVISIONING_SERVICE_UUID]
+        adv_obj.manufacturer_data = {0xFFFF: mfg_data}
+        adv_obj.service_UUIDs = [PROVISIONING_SERVICE_UUID]
         
         # Register the advertisement using the Advertising Manager.
         ad_manager = advertisement.AdvertisingManager()
-        ad_manager.register_advertisement(ad)
+        ad_manager.register_advertisement(adv_obj)
         log_debug("Advertisement registered with manufacturer data: " + custom_serial)
     except Exception as e:
         log_debug("Advertisement error: " + str(e))
@@ -109,6 +115,7 @@ def wifi_write_callback(value, options):
         log_debug("wifi_write_callback triggered!")
         credentials = bytes(value).decode('utf-8')
         log_debug("Received data via BLE: " + credentials)
+        # No notification is sent back in this version.
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return

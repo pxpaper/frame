@@ -5,36 +5,20 @@ import subprocess
 import time
 import threading
 from bluezero import adapter, peripheral
-import re # Import regex for parsing
 
 # Global GUI variables and flags.
 launched = False          # Flag to ensure we only launch once
 debug_messages = []       # List for debug messages
 provisioning_char = None  # Global reference to our provisioning characteristic
-serial_char = None        # Global reference to the serial number characteristic
+
+# New constants for serial number.
+SERIAL_NUMBER = "1234567890"  # Replace with your device's serial number if available
+SERIAL_CHAR_UUID = "abcdefab-cdef-abcdef-abcd-abcdefabcdef"
 
 # UUIDs for our custom provisioning service and characteristic.
 PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 PROVISIONING_CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
-# Define a new UUID for the serial number characteristic
-SERIAL_NUMBER_CHAR_UUID = "12345678-1234-5678-1234-56789abcdef2"
 
-# --- Function to get CPU Serial ---
-def get_cpu_serial():
-    """Gets the CPU serial number from /proc/cpuinfo."""
-    try:
-        with open('/proc/cpuinfo', 'r') as f:
-            for line in f:
-                if line.startswith('Serial'):
-                    # Extract the serial number (the part after ': ')
-                    serial = line.split(':')[1].strip()
-                    return "PX" + serial # Prepend "PX"
-    except Exception as e:
-        log_debug(f"Error reading serial number: {e}")
-        return "PXUNKNOWN" # Return a default value on error
-    return "PXNOTFOUND" # Return if Serial line not found
-
-# --- Logging and WiFi Check (Unchanged) ---
 def log_debug(message):
     """Logs debug messages to the GUI text widget and prints them to console."""
     global debug_text
@@ -54,11 +38,11 @@ def check_wifi_connection():
     except OSError:
         return False
 
-# --- Modified update_status ---
 def update_status():
     """
     Update GUI status: if WiFi is connected, launch the browser;
-    otherwise, display a waiting message. Keeps running regardless.
+    otherwise, display a waiting message.
+    Always keep the GUI (and Bluetooth functionality) running.
     """
     global launched
     connected = check_wifi_connection()
@@ -73,16 +57,10 @@ def update_status():
             "--kiosk",
             "https://pixelpaper.com/frame.html"
         ])
-        # *** REMOVED root.destroy() to keep the script and BLE running ***
-        # Optionally hide the window if desired:
-        # root.withdraw()
+        # Do NOT destroy the GUI so that Bluetooth remains active.
     elif not connected:
         label.config(text="WiFi Not Connected. Waiting for connection...")
-
-    # Keep checking periodically even after launch,
-    # in case status needs updating later or for debug.
     root.after(5000, update_status)
-
 
 # --- Bluezero GATT Server Functions ---
 
@@ -96,19 +74,23 @@ def wifi_write_callback(value, options):
         log_debug("wifi_write_callback triggered!")
         credentials = bytes(value).decode('utf-8')
         log_debug("Received data via BLE: " + credentials)
-        # Implement credential processing logic here (e.g., save to wpa_supplicant)
-        # Example: process_wifi_credentials(credentials)
+        # No notification is sent back in this version.
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
-    # No return value needed for write-without-response
+    return
 
-# --- Modified start_gatt_server ---
+def serial_read_callback(options):
+    """
+    Read callback for the serial characteristic.
+    Returns the serial number (prefixed with "PX") as a list of byte values.
+    """
+    serial_str = "PX" + SERIAL_NUMBER
+    # Convert each character to its integer ASCII value.
+    return [ord(c) for c in serial_str]
+
 def start_gatt_server():
-    """Continuously sets up and publishes a BLE GATT server for provisioning and identification."""
-    global provisioning_char, serial_char
-    cpu_serial = get_cpu_serial() # Get serial once at the start
-    log_debug(f"Device Serial Number: {cpu_serial}")
-
+    """Continuously sets up and publishes a BLE GATT server for provisioning."""
+    global provisioning_char
     while True:
         try:
             dongles = adapter.Adapter.available()
@@ -116,65 +98,52 @@ def start_gatt_server():
                 log_debug("No Bluetooth adapters available for GATT server!")
                 time.sleep(5)
                 continue
-
+            # Use the first available adapter.
             dongle_addr = list(dongles)[0].address
             log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
-
+            
+            # Create a Peripheral object with a local name (e.g., "PixelPaper").
             ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
+            # Add a custom provisioning service.
             ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
-
-            # Add the provisioning characteristic (write-only)
+            # Add a write-only characteristic for provisioning.
             provisioning_char = ble_periph.add_characteristic(
                 srv_id=1,
-                chr_id=1, # Characteristic ID 1
+                chr_id=1,
                 uuid=PROVISIONING_CHAR_UUID,
-                value=[],
+                value=[],  # Start with an empty value.
                 notifying=False,
                 flags=['write', 'write-without-response'],
                 write_callback=wifi_write_callback,
                 read_callback=None,
                 notify_callback=None
             )
-            log_debug("Added Provisioning Characteristic.")
-
-            # Add the serial number characteristic (read-only)
-            serial_char = ble_periph.add_characteristic(
+            # Add a read-only characteristic for the serial number.
+            ble_periph.add_characteristic(
                 srv_id=1,
-                chr_id=2, # Characteristic ID 2 (must be different from chr_id 1)
-                uuid=SERIAL_NUMBER_CHAR_UUID,
-                value=list(cpu_serial.encode('utf-8')), # Encode serial to bytes, then list of ints
+                chr_id=2,
+                uuid=SERIAL_CHAR_UUID,
+                value=[],  # Not used since read_callback is provided.
                 notifying=False,
-                flags=['read'], # Only allow reading
+                flags=['read'],
+                read_callback=serial_read_callback,
                 write_callback=None,
-                read_callback=None, # Static value, no read callback needed
                 notify_callback=None
             )
-            log_debug(f"Added Serial Number Characteristic ({cpu_serial}).")
-
-
-            log_debug("Publishing GATT server...")
-            ble_periph.publish()
-            log_debug("GATT server event loop ended (likely due to disconnection or error).")
-
+            log_debug("Publishing GATT server for provisioning (with serial characteristic)...")
+            ble_periph.publish()  # This call blocks until the peripheral event loop stops.
+            log_debug("GATT server event loop ended (likely due to disconnection).")
         except Exception as e:
             log_debug("Exception in start_gatt_server: " + str(e))
-
         log_debug("Restarting GATT server in 5 seconds...")
-        # Cleanup before restart (important!)
-        if 'ble_periph' in locals() and ble_periph.published:
-             try:
-                 ble_periph.remove_service(1) # Attempt to clean up the service
-             except Exception as cleanup_e:
-                 log_debug(f"Error cleaning up service: {cleanup_e}")
         time.sleep(5)
-
 
 def start_gatt_server_thread():
     """Starts the GATT server in a background daemon thread."""
     t = threading.Thread(target=start_gatt_server, daemon=True)
     t.start()
 
-# --- Main GUI Setup (Unchanged) ---
+# --- Main GUI Setup ---
 
 if __name__ == '__main__':
     root = tk.Tk()

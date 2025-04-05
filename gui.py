@@ -4,7 +4,7 @@ import socket
 import subprocess
 import time
 import threading
-from bluezero import adapter, peripheral
+from bluezero import adapter, peripheral, advertisement
 
 # Global GUI variables and flags.
 launched = False          # Flag to ensure we only launch once
@@ -46,6 +46,10 @@ def check_wifi_connection():
         return False
 
 def update_status():
+    """
+    Update GUI status: if WiFi is connected, launch the browser;
+    otherwise, display a waiting message.
+    """
     global launched
     connected = check_wifi_connection()
     if connected and not launched:
@@ -74,6 +78,7 @@ def wifi_write_callback(value, options):
         log_debug("wifi_write_callback triggered!")
         credentials = bytes(value).decode('utf-8')
         log_debug("Received data via BLE: " + credentials)
+        # No notification is sent back in this version.
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
@@ -95,13 +100,19 @@ def start_gatt_server():
             serial = get_serial_number()
             log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
             log_debug("Device serial: " + serial)
-            # Prepare manufacturer data: prepend "PX" to the serial, then encode as hex with "0x" prefix.
-            manufacturer_string = "PX" + serial
-            manufacturer_hex = "0x" + manufacturer_string.encode("utf-8").hex()
-            log_debug("Manufacturer data: " + manufacturer_hex)
+            # Prepare manufacturer data: Prepend "PX" to the serial.
+            manufacturer_str = "PX" + serial
+            manufacturer_bytes = manufacturer_str.encode("utf-8")
+            # Create an advertisement object and set manufacturer data.
+            adv = advertisement.Advertisement('peripheral', 0)
+            adv.service_UUIDs = [PROVISIONING_SERVICE_UUID]
+            # Use company ID 0xFFFF (replace with your assigned ID in production).
+            adv.manufacturer_data = { 0xFFFF: manufacturer_bytes }
+            adv.register()
+            log_debug("Advertisement registered with manufacturer data: " + manufacturer_str)
             
-            # Create a Peripheral with a constant local name and include manufacturer data.
-            ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper", manufacturer_data=manufacturer_hex)
+            # Create the peripheral with a constant local name.
+            ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
             ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
             provisioning_char = ble_periph.add_characteristic(
                 srv_id=1,
@@ -115,14 +126,16 @@ def start_gatt_server():
                 notify_callback=None
             )
             log_debug("Publishing GATT server for provisioning...")
-            ble_periph.publish()  # This call blocks until the peripheral event loop stops.
+            ble_periph.publish()  # Blocks until the event loop stops.
             log_debug("GATT server event loop ended (likely due to disconnection).")
+            adv.unregister()
         except Exception as e:
             log_debug("Exception in start_gatt_server: " + str(e))
         log_debug("Restarting GATT server in 5 seconds...")
         time.sleep(5)
 
 def start_gatt_server_thread():
+    """Starts the GATT server in a background daemon thread."""
     t = threading.Thread(target=start_gatt_server, daemon=True)
     t.start()
 

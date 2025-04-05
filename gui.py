@@ -63,7 +63,7 @@ def update_status():
             "--kiosk",
             "https://pixelpaper.com/frame.html"
         ])
-        # Do not destroy the window so Bluetooth continues to work.
+        # Keep the window open so that Bluetooth functionality continues.
     elif not connected:
         label.config(text="WiFi Not Connected. Waiting for connection...")
     root.after(5000, update_status)
@@ -81,10 +81,10 @@ def start_advertisement():
         mfg_data = bytearray("PX" + serial, 'utf-8')
         # Convert bytearray to a list of integers.
         mfg_data_list = list(mfg_data)
-        # Create an advertisement using keyword arguments.
-        ad = advertisement.Advertisement(ad_type="peripheral", index=0)
+        # Create an advertisement with the ad type "peripheral".
+        ad = advertisement.Advertisement("peripheral")
         ad.local_name = "PixelPaper"
-        ad.manufacturer_data = {0xFFFF: mfg_data_list}  # 0xFFFF is used as a sample manufacturer ID.
+        ad.manufacturer_data = {0xFFFF: mfg_data_list}  # Using 0xFFFF as a sample manufacturer ID.
         ad.service_UUIDs = [PROVISIONING_SERVICE_UUID]
         ad.register()
         log_debug("Advertisement registered with manufacturer data: PX" + serial)
@@ -96,13 +96,14 @@ def start_advertisement():
 def wifi_write_callback(value, options):
     """
     Write callback for our provisioning characteristic.
-    Called when a mobile app writes WiFi credentials via BLE.
+    Called when a mobile app writes WiFi credentials (or other commands) via BLE.
     'value' is a list of integers representing the bytes sent.
     """
     try:
         log_debug("wifi_write_callback triggered!")
         credentials = bytes(value).decode('utf-8')
         log_debug("Received data via BLE: " + credentials)
+        # No notification is sent back in this version.
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
@@ -166,7 +167,7 @@ if __name__ == '__main__':
     debug_text.pack(fill=tk.X, side=tk.BOTTOM)
     debug_text.config(state=tk.DISABLED)
 
-    # Start the advertisement with manufacturer data.
+    # Start the advertisement with the manufacturer data.
     start_advertisement()
 
     # Start the BLE GATT server for provisioning in a background thread.

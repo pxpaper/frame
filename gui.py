@@ -9,7 +9,7 @@ from bluezero import adapter, peripheral
 # Global GUI variables and flags.
 launched = False          # Flag to ensure we only launch once
 debug_messages = []       # List for debug messages
-provisioning_char = None  # Global reference to our provisioning (wifi) characteristic
+provisioning_char = None  # Global reference to our provisioning characteristic
 
 # UUIDs for our custom provisioning service and characteristics.
 PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
@@ -68,6 +68,7 @@ def update_status():
     root.after(5000, update_status)
 
 # --- Bluezero GATT Server Functions ---
+
 def wifi_write_callback(value, options):
     """
     Write callback for our provisioning characteristic.
@@ -78,17 +79,13 @@ def wifi_write_callback(value, options):
         log_debug("wifi_write_callback triggered!")
         credentials = bytes(value).decode('utf-8')
         log_debug("Received data via BLE: " + credentials)
-        # No notification is sent back in this version.
+        # No notification is sent back.
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
 
 def start_gatt_server():
-    """
-    Continuously sets up and publishes a BLE GATT server for provisioning and serial.
-    The key change here is that we add the serial characteristic first (chr_id=1)
-    and then the wifi characteristic second (chr_id=2) so that the wifi write callback triggers.
-    """
+    """Continuously sets up and publishes a BLE GATT server for provisioning and serial."""
     global provisioning_char
     while True:
         try:
@@ -105,22 +102,10 @@ def start_gatt_server():
             ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
             # Add a custom provisioning service.
             ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
-            # First, add the serial characteristic (read-only) with chr_id=1.
-            ble_periph.add_characteristic(
-                srv_id=1,
-                chr_id=1,
-                uuid=SERIAL_CHAR_UUID,
-                value=list(get_serial_number().encode()),
-                notifying=False,
-                flags=['read'],
-                read_callback=lambda options: list(get_serial_number().encode()),
-                write_callback=None,
-                notify_callback=None
-            )
-            # Then, add the wifi (provisioning) characteristic (write-only) with chr_id=2.
+            # Add a write-only provisioning characteristic.
             provisioning_char = ble_periph.add_characteristic(
                 srv_id=1,
-                chr_id=2,
+                chr_id=1,
                 uuid=PROVISIONING_CHAR_UUID,
                 value=[],  # Start with an empty value.
                 notifying=False,
@@ -129,6 +114,18 @@ def start_gatt_server():
                 read_callback=None,
                 notify_callback=None
             )
+            # Add a read-only serial characteristic containing the serial number.
+            #ble_periph.add_characteristic(
+            #    srv_id=1,
+            #    chr_id=2,
+            #    uuid=SERIAL_CHAR_UUID,
+            #    value=list(get_serial_number().encode()),
+            #    notifying=False,
+            #    flags=['read'],
+            #    read_callback=lambda options: list(get_serial_number().encode()),
+            #    write_callback=None,
+            #    notify_callback=None
+            #)
             log_debug("Publishing GATT server for provisioning and serial...")
             ble_periph.publish()  # Blocks until the peripheral event loop stops.
             log_debug("GATT server event loop ended (likely due to disconnection).")
@@ -143,6 +140,7 @@ def start_gatt_server_thread():
     t.start()
 
 # --- Main GUI Setup ---
+
 if __name__ == '__main__':
     root = tk.Tk()
     root.title("Frame Status")

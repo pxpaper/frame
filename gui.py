@@ -7,7 +7,7 @@ import threading
 from bluezero import adapter, peripheral, advertisement
 
 # Global GUI variables and flags.
-launched = False          # Flag to ensure we launch Chromium only once
+launched = False          # Flag to ensure we only launch once
 debug_messages = []       # List for debug messages
 provisioning_char = None  # Global reference to our provisioning characteristic
 
@@ -16,7 +16,10 @@ PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 PROVISIONING_CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
 
 def get_serial_number():
-    # For many Orange Pi boards, the serial number is in /proc/device-tree/serial-number
+    """
+    For many Orange Pi boards, the serial number is in /proc/device-tree/serial-number.
+    Returns the serial as a string, or "unknown" if it cannot be read.
+    """
     try:
         with open('/proc/device-tree/serial-number', 'r') as f:
             serial = f.read().strip('\x00\n ')
@@ -47,8 +50,8 @@ def check_wifi_connection():
 
 def update_status():
     """
-    Update GUI status: if WiFi is connected, launch Chromium (once)
-    while keeping the window open.
+    Update GUI status: if WiFi is connected, launch the browser;
+    otherwise, display a waiting message.
     """
     global launched
     connected = check_wifi_connection()
@@ -63,31 +66,35 @@ def update_status():
             "--kiosk",
             "https://pixelpaper.com/frame.html"
         ])
-        # Keep the window open so that Bluetooth functionality continues.
+        root.destroy()
     elif not connected:
         label.config(text="WiFi Not Connected. Waiting for connection...")
-    root.after(5000, update_status)
+        root.after(5000, update_status)
 
-# --- Bluezero Advertisement ---
+# --- Bluezero Advertisement Functions ---
 
 def start_advertisement():
     """
     Creates and registers an advertisement that includes manufacturer data.
-    The manufacturer data contains the serial number, prepended with "PX".
+    The manufacturer data contains the custom serial (with "PX" prepended).
     """
     try:
         serial = get_serial_number()
-        # Prepend "PX" to the serial.
-        mfg_data = bytearray("PX" + serial, 'utf-8')
-        # Convert bytearray to a list of integers.
-        mfg_data_list = list(mfg_data)
-        # Create an advertisement with the ad type "peripheral".
-        ad = advertisement.Advertisement("peripheral")
-        ad.local_name = "PixelPaper"
-        ad.manufacturer_data = {0xFFFF: mfg_data_list}  # Using 0xFFFF as a sample manufacturer ID.
+        custom_serial = "PX" + serial
+        # Convert the custom serial string into a list of bytes.
+        mfg_data = [dbus.Byte(c) for c in custom_serial.encode('utf-8')]
+        # Create an Advertisement with advert_id=1 and type "peripheral".
+        ad = advertisement.Advertisement(1, "peripheral")
+        ad.local_name = "PixelPaper"  # Leave the local name as is.
+        # Set manufacturer data using an example Company ID (0xFFFF).
+        ad.manufacturer_data = {0xFFFF: mfg_data}
         ad.service_UUIDs = [PROVISIONING_SERVICE_UUID]
-        ad.register()
-        log_debug("Advertisement registered with manufacturer data: PX" + serial)
+        
+        # Register the advertisement using the Advertising Manager.
+        ad_manager = advertisement.AdvertisingManager()
+        ad_manager.register_advertisement(ad)
+        log_debug("Advertisement registered with manufacturer data: " + custom_serial)
+        # If desired, you could run ad.start() in a separate thread to run the event loop.
     except Exception as e:
         log_debug("Advertisement error: " + str(e))
 
@@ -124,7 +131,7 @@ def start_gatt_server():
             dongle_addr = list(dongles)[0].address
             log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
             
-            # Create a Peripheral with a fixed local name.
+            # Create a Peripheral object with a fixed local name.
             ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
             ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
             provisioning_char = ble_periph.add_characteristic(
@@ -139,7 +146,7 @@ def start_gatt_server():
                 notify_callback=None
             )
             log_debug("Publishing GATT server for provisioning...")
-            ble_periph.publish()  # This call blocks until the peripheral event loop stops.
+            ble_periph.publish()  # Blocks until the peripheral event loop stops.
             log_debug("GATT server event loop ended (likely due to disconnection).")
         except Exception as e:
             log_debug("Exception in start_gatt_server: " + str(e))
@@ -167,7 +174,7 @@ if __name__ == '__main__':
     debug_text.pack(fill=tk.X, side=tk.BOTTOM)
     debug_text.config(state=tk.DISABLED)
 
-    # Start the advertisement with the manufacturer data.
+    # Start the advertisement (with custom serial in manufacturer data).
     start_advertisement()
 
     # Start the BLE GATT server for provisioning in a background thread.

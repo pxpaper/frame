@@ -28,7 +28,6 @@ def log_debug(message):
     """Logs debug messages to the GUI text widget and prints them to console."""
     global debug_text
     debug_messages.append(message)
-    # Limit log length to the last 10 messages.
     debug_text.config(state=tk.NORMAL)
     debug_text.delete(1.0, tk.END)
     debug_text.insert(tk.END, "\n".join(debug_messages[-10:]))
@@ -62,7 +61,7 @@ def update_status():
             "--kiosk",
             "https://pixelpaper.com/frame.html"
         ])
-        # Do not destroy the GUI so that BLE stays active.
+        # Do not destroy the GUI so that BLE remains active.
     elif not connected:
         label.config(text="WiFi Not Connected. Waiting for connection...")
     root.after(5000, update_status)
@@ -102,16 +101,17 @@ def start_gatt_server():
             ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
             # Add a custom provisioning service.
             ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
-            # Add a write-only provisioning characteristic.
+            # Add the provisioning characteristic with flags 'write', 'write-without-response' and 'read'
+            # and a dummy read_callback to ensure write_callback is triggered.
             provisioning_char = ble_periph.add_characteristic(
                 srv_id=1,
                 chr_id=1,
                 uuid=PROVISIONING_CHAR_UUID,
                 value=[],  # Start with an empty value.
                 notifying=False,
-                flags=['write', 'write-without-response'],
+                flags=['write', 'write-without-response', 'read'],
                 write_callback=wifi_write_callback,
-                read_callback=None,
+                read_callback=lambda options: [],
                 notify_callback=None
             )
             # Add a read-only serial characteristic containing the serial number.
@@ -127,7 +127,7 @@ def start_gatt_server():
                 notify_callback=None
             )
             log_debug("Publishing GATT server for provisioning and serial...")
-            ble_periph.publish()  # Blocks until the peripheral event loop stops.
+            ble_periph.publish()  # This call blocks until the peripheral event loop stops.
             log_debug("GATT server event loop ended (likely due to disconnection).")
         except Exception as e:
             log_debug("Exception in start_gatt_server: " + str(e))
@@ -145,19 +145,19 @@ if __name__ == '__main__':
     root = tk.Tk()
     root.title("Frame Status")
     root.attributes('-fullscreen', True)
-
+    
     # Main status label.
     label = tk.Label(root, text="Checking WiFi...", font=("Helvetica", 48))
     label.pack(expand=True)
-
+    
     # Text widget for visual debugging.
     debug_text = tk.Text(root, height=10, bg="#f0f0f0")
     debug_text.pack(fill=tk.X, side=tk.BOTTOM)
     debug_text.config(state=tk.DISABLED)
-
+    
     # Always start the BLE GATT server.
     start_gatt_server_thread()
-
+    
     # Begin checking WiFi connection and updating the UI.
     update_status()
     root.mainloop()

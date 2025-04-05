@@ -78,7 +78,6 @@ def wifi_write_callback(value, options):
         log_debug("wifi_write_callback triggered!")
         credentials = bytes(value).decode('utf-8')
         log_debug("Received data via BLE: " + credentials)
-        # No notification is sent back in this version.
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
@@ -100,14 +99,17 @@ def start_gatt_server():
             serial = get_serial_number()
             log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
             log_debug("Device serial: " + serial)
+            
             # Prepare manufacturer data: Prepend "PX" to the serial.
             manufacturer_str = "PX" + serial
             manufacturer_bytes = manufacturer_str.encode("utf-8")
+            # Convert bytes to list of integers.
+            manufacturer_data = { 0xFFFF: list(manufacturer_bytes) }
+            
             # Create an advertisement object and set manufacturer data.
             adv = advertisement.Advertisement('peripheral', 0)
             adv.service_UUIDs = [PROVISIONING_SERVICE_UUID]
-            # Use company ID 0xFFFF (replace with your assigned ID in production).
-            adv.manufacturer_data = { 0xFFFF: manufacturer_bytes }
+            adv.manufacturer_data = manufacturer_data
             adv.register()
             log_debug("Advertisement registered with manufacturer data: " + manufacturer_str)
             

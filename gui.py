@@ -11,6 +11,7 @@ launched = False          # Flag to ensure we only launch Chromium once
 debug_messages = []       # List for debug messages
 provisioning_char = None  # Global reference to our provisioning characteristic
 adv_obj = None            # Global advertisement object
+global_periph = None      # Global Peripheral instance
 
 # UUIDs for our custom provisioning service and characteristic.
 PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
@@ -67,7 +68,7 @@ def update_status():
             "--kiosk",
             "https://pixelpaper.com/frame.html"
         ])
-        # Do not destroy the GUI, so Bluetooth services remain running.
+        # Note: We leave the GUI running so that Bluetooth services stay active.
     else:
         label.config(text="WiFi Not Connected. Waiting for connection...")
     root.after(5000, update_status)
@@ -89,9 +90,9 @@ def start_advertisement():
         custom_serial = "PX" + serial
         # Convert the custom serial string into a list of bytes.
         mfg_data = list(custom_serial.encode('utf-8'))
-        # Create an Advertisement with advert_id=1 and type "peripheral" (positional argument).
+        # Create an Advertisement with advert_id=1 and type "peripheral".
         adv_obj = advertisement.Advertisement(1, "peripheral")
-        adv_obj.local_name = "PixelPaper"  # Set the local name.
+        adv_obj.local_name = "PixelPaper"
         # Set manufacturer data using an example Company ID (0xFFFF).
         adv_obj.manufacturer_data = {0xFFFF: mfg_data}
         adv_obj.service_UUIDs = [PROVISIONING_SERVICE_UUID]
@@ -115,7 +116,6 @@ def wifi_write_callback(value, options):
         log_debug("wifi_write_callback triggered!")
         credentials = bytes(value).decode('utf-8')
         log_debug("Received data via BLE: " + credentials)
-        # No notification is sent back in this version.
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
@@ -123,9 +123,9 @@ def wifi_write_callback(value, options):
 def start_gatt_server():
     """
     Continuously sets up and publishes a BLE GATT server for provisioning.
-    If the peripheral disconnects, the loop restarts the server.
+    If the peripheral disconnects, unpublish the previous object and restart.
     """
-    global provisioning_char
+    global provisioning_char, global_periph
     while True:
         try:
             dongles = adapter.Adapter.available()
@@ -136,10 +136,19 @@ def start_gatt_server():
             dongle_addr = list(dongles)[0].address
             log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
             
-            # Create a Peripheral object with a fixed local name.
-            ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
-            ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
-            provisioning_char = ble_periph.add_characteristic(
+            # If a previous Peripheral exists, unpublish it.
+            if global_periph is not None:
+                try:
+                    global_periph.unpublish()
+                    log_debug("Unpublished previous GATT server.")
+                except Exception as ex:
+                    log_debug("Error unpublishing previous GATT server: " + str(ex))
+                global_periph = None
+            
+            # Create a new Peripheral object with a fixed local name.
+            global_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
+            global_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
+            provisioning_char = global_periph.add_characteristic(
                 srv_id=1,
                 chr_id=1,
                 uuid=PROVISIONING_CHAR_UUID,
@@ -151,7 +160,7 @@ def start_gatt_server():
                 notify_callback=None
             )
             log_debug("Publishing GATT server for provisioning...")
-            ble_periph.publish()  # Blocks until the peripheral event loop stops.
+            global_periph.publish()  # Blocks until the peripheral event loop stops.
             log_debug("GATT server event loop ended (likely due to disconnection).")
         except Exception as e:
             log_debug("Exception in start_gatt_server: " + str(e))

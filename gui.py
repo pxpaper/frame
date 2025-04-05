@@ -60,7 +60,12 @@ def update_status():
             "--noerrdialogs",
             "--disable-infobars",
             "--kiosk",
+            "--enable-gpu-rasterization",
+            "--enable-zero-copy",
+            "--ignore-gpu-blocklist",
+            "--use-gl=egl",
             "https://pixelpaper.com/frame.html"
+            
         ])
         # Do not destroy the GUI so that BLE stays active.
     elif not connected:

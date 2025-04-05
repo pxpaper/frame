@@ -4,113 +4,85 @@ import socket
 import subprocess
 import time
 import threading
-import re  # Import regex for parsing
 from bluezero import adapter, peripheral
+import re # Import regex for parsing
 
 # Global GUI variables and flags.
-launched = False
-debug_messages = []
-provisioning_char = None
-serial_char = None # Global ref for serial characteristic
+launched = False          # Flag to ensure we only launch once
+debug_messages = []       # List for debug messages
+provisioning_char = None  # Global reference to our provisioning characteristic
+serial_char = None        # Global reference to the serial number characteristic
 
-# --- Constants ---
-DEVICE_NAME = "PixelPaper" # Consistent device name
-
-# Service and Characteristic UUIDs
+# UUIDs for our custom provisioning service and characteristic.
 PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 PROVISIONING_CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
+# Define a new UUID for the serial number characteristic
+SERIAL_NUMBER_CHAR_UUID = "12345678-1234-5678-1234-56789abcdef2"
 
-# NEW: Device Information Service and Serial Number Characteristic UUIDs
-DEVICE_INFO_SERVICE_UUID  = "0000180a-0000-1000-8000-00805f9b34fb" # Standard Device Information Service UUID
-SERIAL_NUMBER_CHAR_UUID   = "00002a25-0000-1000-8000-00805f9b34fb" # Standard Serial Number String Characteristic UUID
-
-# --- Utility Functions ---
-
-def log_debug(message):
-    """Logs debug messages to the GUI text widget and prints them to console."""
-    global debug_text
-    # Ensure updates happen on the main thread if called from another thread
-    def update_gui():
-        debug_messages.append(str(message)) # Ensure it's a string
-        # Limit log length to the last 10 messages.
-        debug_text.config(state=tk.NORMAL)
-        debug_text.delete(1.0, tk.END)
-        debug_text.insert(tk.END, "\n".join(debug_messages[-10:]))
-        debug_text.config(state=tk.DISABLED)
-        debug_text.see(tk.END) # Scroll to the bottom
-    # Schedule the GUI update on the main thread
-    if root and root.winfo_exists():
-         root.after(0, update_gui)
-    print(message)
-
-
+# --- Function to get CPU Serial ---
 def get_cpu_serial():
-    """Retrieves the CPU serial number from /proc/cpuinfo."""
+    """Gets the CPU serial number from /proc/cpuinfo."""
     try:
         with open('/proc/cpuinfo', 'r') as f:
             for line in f:
                 if line.startswith('Serial'):
-                    # Use regex to find the hexadecimal serial number
-                    match = re.search(r':\s*([0-9a-fA-F]+)', line)
-                    if match:
-                        serial = match.group(1)
-                        log_debug(f"Found CPU Serial: {serial}")
-                        return serial
-        log_debug("Could not find Serial in /proc/cpuinfo")
-        return "UnknownSerial" # Fallback
-    except FileNotFoundError:
-        log_debug("Error: /proc/cpuinfo not found.")
-        return "UnknownSerial" # Fallback
+                    # Extract the serial number (the part after ': ')
+                    serial = line.split(':')[1].strip()
+                    return "PX" + serial # Prepend "PX"
     except Exception as e:
-        log_debug(f"Error reading CPU serial: {e}")
-        return "UnknownSerial" # Fallback
+        log_debug(f"Error reading serial number: {e}")
+        return "PXUNKNOWN" # Return a default value on error
+    return "PXNOTFOUND" # Return if Serial line not found
+
+# --- Logging and WiFi Check (Unchanged) ---
+def log_debug(message):
+    """Logs debug messages to the GUI text widget and prints them to console."""
+    global debug_text
+    debug_messages.append(message)
+    # Limit log length to the last 10 messages.
+    debug_text.config(state=tk.NORMAL)
+    debug_text.delete(1.0, tk.END)
+    debug_text.insert(tk.END, "\n".join(debug_messages[-10:]))
+    debug_text.config(state=tk.DISABLED)
+    print(message)
 
 def check_wifi_connection():
     """Test for internet connectivity by connecting to Google DNS."""
-    # (Your existing function - unchanged)
     try:
         socket.create_connection(("8.8.8.8", 53), timeout=2)
         return True
     except OSError:
         return False
 
+# --- Modified update_status ---
 def update_status():
     """
     Update GUI status: if WiFi is connected, launch the browser;
-    otherwise, display a waiting message.
+    otherwise, display a waiting message. Keeps running regardless.
     """
-    # (Your existing function - largely unchanged)
     global launched
     connected = check_wifi_connection()
     if connected and not launched:
         label.config(text="WiFi Connected. Launching frame...")
         log_debug("WiFi connected, launching browser.")
         launched = True
-        try:
-            subprocess.Popen([
-                "chromium",
-                "--noerrdialogs",
-                "--disable-infobars",
-                "--kiosk",
-                "https://pixelpaper.com/frame.html"
-            ])
-            # Gracefully exit the Tkinter loop after launching
-            if root and root.winfo_exists():
-                root.after(1000, root.destroy) # Give a second before destroying
-        except FileNotFoundError:
-            log_debug("Error: chromium command not found. Cannot launch browser.")
-            label.config(text="Error launching browser!")
-        except Exception as e:
-            log_debug(f"Error launching chromium: {e}")
-            label.config(text="Error launching browser!")
-
+        subprocess.Popen([
+            "chromium",
+            "--noerrdialogs",
+            "--disable-infobars",
+            "--kiosk",
+            "https://pixelpaper.com/frame.html"
+        ])
+        # *** REMOVED root.destroy() to keep the script and BLE running ***
+        # Optionally hide the window if desired:
+        # root.withdraw()
     elif not connected:
-        label.config(text="WiFi Not Connected. Waiting...")
-        if root and root.winfo_exists():
-             # Check again sooner if not connected
-             root.after(3000, update_status)
-    else: # Connected but already launched
-        pass # Do nothing, browser is running
+        label.config(text="WiFi Not Connected. Waiting for connection...")
+
+    # Keep checking periodically even after launch,
+    # in case status needs updating later or for debug.
+    root.after(5000, update_status)
+
 
 # --- Bluezero GATT Server Functions ---
 
@@ -124,131 +96,103 @@ def wifi_write_callback(value, options):
         log_debug("wifi_write_callback triggered!")
         credentials = bytes(value).decode('utf-8')
         log_debug("Received data via BLE: " + credentials)
-        # TODO: Add actual WiFi provisioning logic here based on 'credentials'
-        # Example: Parse "WIFI:ssid;PASS:password;"
-        # Connect using nmcli or similar tool
-
-        # After processing, maybe update the status label
-        if root and root.winfo_exists():
-            root.after(0, lambda: label.config(text="Credentials Received. Connecting..."))
-            root.after(1000, update_status) # Re-check connection status
-
+        # Implement credential processing logic here (e.g., save to wpa_supplicant)
+        # Example: process_wifi_credentials(credentials)
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
+    # No return value needed for write-without-response
 
+# --- Modified start_gatt_server ---
 def start_gatt_server():
-    """Continuously sets up and publishes a BLE GATT server for provisioning."""
+    """Continuously sets up and publishes a BLE GATT server for provisioning and identification."""
     global provisioning_char, serial_char
-
-    # Get the unique serial number ONCE
-    pixelpaper_serial = "PX" + get_cpu_serial()
-    log_debug(f"Using identifier: {pixelpaper_serial}")
-    serial_bytes = pixelpaper_serial.encode('utf-8') # Encode to bytes
+    cpu_serial = get_cpu_serial() # Get serial once at the start
+    log_debug(f"Device Serial Number: {cpu_serial}")
 
     while True:
-        ble_periph = None # Ensure it's reset in case of loop due to error
         try:
-            dongles = list(adapter.Adapter.available())
+            dongles = adapter.Adapter.available()
             if not dongles:
-                log_debug("No Bluetooth adapters available!")
+                log_debug("No Bluetooth adapters available for GATT server!")
                 time.sleep(5)
                 continue
 
-            dongle = dongles[0]
-            log_debug(f"Using Bluetooth adapter: {dongle.address} ({dongle.name})")
+            dongle_addr = list(dongles)[0].address
+            log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
 
-            # Ensure adapter is powered on
-            if not dongle.powered:
-                log_debug("Powering on Bluetooth adapter...")
-                dongle.powered = True
-                time.sleep(1) # Give it a moment
-
-            # Create a Peripheral object
-            ble_periph = peripheral.Peripheral(dongle.address, local_name=DEVICE_NAME, appearance=1344) # 1344 = Generic Tag
-
-            # --- Provisioning Service ---
+            ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
             ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
+
+            # Add the provisioning characteristic (write-only)
             provisioning_char = ble_periph.add_characteristic(
                 srv_id=1,
-                chr_id=1,
+                chr_id=1, # Characteristic ID 1
                 uuid=PROVISIONING_CHAR_UUID,
                 value=[],
                 notifying=False,
-                flags=['write', 'write-without-response'], # Keep write for credentials
+                flags=['write', 'write-without-response'],
                 write_callback=wifi_write_callback,
-                read_callback=None, # No read needed for provisioning char
+                read_callback=None,
                 notify_callback=None
             )
-            log_debug(f"Added Provisioning Characteristic: {PROVISIONING_CHAR_UUID}")
+            log_debug("Added Provisioning Characteristic.")
 
-            # --- Device Information Service ---
-            ble_periph.add_service(srv_id=2, uuid=DEVICE_INFO_SERVICE_UUID, primary=True)
+            # Add the serial number characteristic (read-only)
             serial_char = ble_periph.add_characteristic(
-                srv_id=2,
-                chr_id=1,
+                srv_id=1,
+                chr_id=2, # Characteristic ID 2 (must be different from chr_id 1)
                 uuid=SERIAL_NUMBER_CHAR_UUID,
-                value=serial_bytes,   # Set the initial value to the serial number bytes
+                value=list(cpu_serial.encode('utf-8')), # Encode serial to bytes, then list of ints
                 notifying=False,
-                flags=['read'],       # READ ONLY characteristic
-                write_callback=None,  # No writing allowed
-                read_callback=None,   # Bluezero handles read internally for static value
+                flags=['read'], # Only allow reading
+                write_callback=None,
+                read_callback=None, # Static value, no read callback needed
                 notify_callback=None
             )
-            log_debug(f"Added Serial Number Characteristic: {SERIAL_NUMBER_CHAR_UUID} with value: {pixelpaper_serial}")
+            log_debug(f"Added Serial Number Characteristic ({cpu_serial}).")
 
-            # --- Start Advertising ---
-            log_debug(f"Starting BLE advertising as '{DEVICE_NAME}'...")
-            ble_periph.publish() # This blocks until the event loop stops
 
-            # If publish() returns, it means the peripheral loop ended (e.g., adapter reset)
-            log_debug("BLE peripheral event loop stopped. Will restart.")
+            log_debug("Publishing GATT server...")
+            ble_periph.publish()
+            log_debug("GATT server event loop ended (likely due to disconnection or error).")
 
         except Exception as e:
-            log_debug(f"!!! Exception in GATT server loop: {e}")
-            # Clean up peripheral if it exists
-            if ble_periph and hasattr(ble_periph, 'remove_service'):
-                 try:
-                     log_debug("Attempting to clean up BLE services...")
-                     # You might need to remove services in reverse order or handle potential errors here
-                     # For simplicity, we just log and rely on restarting
-                 except Exception as cleanup_e:
-                     log_debug(f"Error during BLE cleanup: {cleanup_e}")
+            log_debug("Exception in start_gatt_server: " + str(e))
 
         log_debug("Restarting GATT server in 5 seconds...")
+        # Cleanup before restart (important!)
+        if 'ble_periph' in locals() and ble_periph.published:
+             try:
+                 ble_periph.remove_service(1) # Attempt to clean up the service
+             except Exception as cleanup_e:
+                 log_debug(f"Error cleaning up service: {cleanup_e}")
         time.sleep(5)
 
 
 def start_gatt_server_thread():
     """Starts the GATT server in a background daemon thread."""
-    log_debug("Starting GATT server thread...")
-    t = threading.Thread(target=start_gatt_server, name="GATTServerThread", daemon=True)
+    t = threading.Thread(target=start_gatt_server, daemon=True)
     t.start()
 
-# --- Main GUI Setup ---
-root = None # Define root globally for access in log_debug and update_status
-debug_text = None
+# --- Main GUI Setup (Unchanged) ---
 
 if __name__ == '__main__':
     root = tk.Tk()
-    root.title("PixelPaper Status")
+    root.title("Frame Status")
     root.attributes('-fullscreen', True)
-    root.configure(bg='black') # Set background color
 
     # Main status label.
-    label = tk.Label(root, text="Initializing...", font=("Helvetica", 36), fg='white', bg='black')
+    label = tk.Label(root, text="Checking WiFi...", font=("Helvetica", 48))
     label.pack(expand=True)
 
     # Text widget for visual debugging.
-    debug_text = tk.Text(root, height=8, width=80, bg="#333", fg="#ccc", font=("Courier", 10), state=tk.DISABLED, wrap=tk.WORD)
-    debug_text.pack(fill=tk.X, side=tk.BOTTOM, padx=10, pady=10)
+    debug_text = tk.Text(root, height=10, bg="#f0f0f0")
+    debug_text.pack(fill=tk.X, side=tk.BOTTOM)
+    debug_text.config(state=tk.DISABLED)
 
-    log_debug("GUI Initialized.")
-
-    # Start the BLE GATT server in a background thread.
+    # Start the BLE GATT server for provisioning in a background thread.
     start_gatt_server_thread()
 
     # Begin checking WiFi connection and updating the UI.
-    root.after(1000, update_status) # Start check after 1 sec
-
+    update_status()
     root.mainloop()
-    log_debug("GUI main loop finished.")

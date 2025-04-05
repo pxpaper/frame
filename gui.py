@@ -63,7 +63,7 @@ def update_status():
             "--kiosk",
             "https://pixelpaper.com/frame.html"
         ])
-        # We don't destroy the window here to keep Bluetooth active.
+        # Do not destroy the window so Bluetooth continues to work.
     elif not connected:
         label.config(text="WiFi Not Connected. Waiting for connection...")
     root.after(5000, update_status)
@@ -79,12 +79,12 @@ def start_advertisement():
         serial = get_serial_number()
         # Prepend "PX" to the serial.
         mfg_data = bytearray("PX" + serial, 'utf-8')
-        # Convert the bytearray to a list of integers.
+        # Convert bytearray to a list of integers.
         mfg_data_list = list(mfg_data)
-        # Create an advertisement; we assume adapter index 0.
-        ad = advertisement.Advertisement("peripheral", 0)
+        # Create an advertisement using keyword arguments.
+        ad = advertisement.Advertisement(ad_type="peripheral", index=0)
         ad.local_name = "PixelPaper"
-        ad.manufacturer_data = {0xFFFF: mfg_data_list}  # Use 0xFFFF as a sample manufacturer ID.
+        ad.manufacturer_data = {0xFFFF: mfg_data_list}  # 0xFFFF is used as a sample manufacturer ID.
         ad.service_UUIDs = [PROVISIONING_SERVICE_UUID]
         ad.register()
         log_debug("Advertisement registered with manufacturer data: PX" + serial)
@@ -138,7 +138,7 @@ def start_gatt_server():
                 notify_callback=None
             )
             log_debug("Publishing GATT server for provisioning...")
-            ble_periph.publish()  # Blocks until the event loop stops.
+            ble_periph.publish()  # This call blocks until the peripheral event loop stops.
             log_debug("GATT server event loop ended (likely due to disconnection).")
         except Exception as e:
             log_debug("Exception in start_gatt_server: " + str(e))
@@ -166,7 +166,7 @@ if __name__ == '__main__':
     debug_text.pack(fill=tk.X, side=tk.BOTTOM)
     debug_text.config(state=tk.DISABLED)
 
-    # Start the advertisement with the manufacturer data.
+    # Start the advertisement with manufacturer data.
     start_advertisement()
 
     # Start the BLE GATT server for provisioning in a background thread.

@@ -67,7 +67,7 @@ def update_status():
             "--kiosk",
             "https://pixelpaper.com/frame.html"
         ])
-        # Note: We do NOT destroy the GUI so that Bluetooth remains active.
+        # We do NOT destroy the GUI so that Bluetooth services remain active.
     else:
         label.config(text="WiFi Not Connected. Waiting for connection...")
     root.after(5000, update_status)
@@ -89,9 +89,9 @@ def start_advertisement():
         custom_serial = "PX" + serial
         # Convert the custom serial string into a list of bytes.
         mfg_data = list(custom_serial.encode('utf-8'))
-        # Create an Advertisement with advert_id 1 and type "peripheral".
-        adv_obj = advertisement.Advertisement(1, "peripheral")
-        adv_obj.local_name = "PixelPaper"  # Set a simple local name.
+        # Create an Advertisement with advert_id=1 and ad_type "peripheral" (passed as a keyword).
+        adv_obj = advertisement.Advertisement(1, ad_type="peripheral")
+        adv_obj.local_name = "PixelPaper"  # Keep the local name simple.
         # Set manufacturer data using an example Company ID (0xFFFF).
         adv_obj.manufacturer_data = {0xFFFF: mfg_data}
         adv_obj.service_UUIDs = [PROVISIONING_SERVICE_UUID]
@@ -108,7 +108,7 @@ def start_advertisement():
 def wifi_write_callback(value, options):
     """
     Write callback for our provisioning characteristic.
-    Called when a mobile app writes WiFi credentials (or other commands) via BLE.
+    Called when a mobile app writes WiFi credentials via BLE.
     'value' is a list of integers representing the bytes sent.
     """
     try:

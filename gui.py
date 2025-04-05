@@ -7,7 +7,7 @@ import threading
 from bluezero import adapter, peripheral, advertisement
 
 # Global GUI variables and flags.
-launched = False          # Flag to ensure we only launch once
+launched = False          # Flag to ensure we only launch Chromium once
 debug_messages = []       # List for debug messages
 provisioning_char = None  # Global reference to our provisioning characteristic
 
@@ -50,42 +50,42 @@ def check_wifi_connection():
 
 def update_status():
     """
-    Update GUI status: if WiFi is connected, launch the browser;
-    otherwise, display a waiting message.
+    Update GUI status continuously.
+    If WiFi is connected and Chromium hasn't been launched yet,
+    launch Chromium in kiosk mode while leaving the GUI and Bluetooth services running.
     """
     global launched
-    connected = check_wifi_connection()
-    if connected and not launched:
+    if check_wifi_connection():
         label.config(text="WiFi Connected. Launching frame...")
-        log_debug("WiFi connected, launching browser.")
-        launched = True
-        subprocess.Popen([
-            "chromium",
-            "--noerrdialogs",
-            "--disable-infobars",
-            "--kiosk",
-            "https://pixelpaper.com/frame.html"
-        ])
-        root.destroy()
-    elif not connected:
+        if not launched:
+            log_debug("WiFi connected, launching browser.")
+            launched = True
+            subprocess.Popen([
+                "chromium",
+                "--noerrdialogs",
+                "--disable-infobars",
+                "--kiosk",
+                "https://pixelpaper.com/frame.html"
+            ])
+    else:
         label.config(text="WiFi Not Connected. Waiting for connection...")
-        root.after(5000, update_status)
+    root.after(5000, update_status)
 
 # --- Bluezero Advertisement Functions ---
 
 def start_advertisement():
     """
     Creates and registers an advertisement that includes manufacturer data.
-    The manufacturer data contains the custom serial (with "PX" prepended).
+    The manufacturer data contains the custom serial (prepended with "PX").
     """
     try:
         serial = get_serial_number()
         custom_serial = "PX" + serial
         # Convert the custom serial string into a list of bytes.
-        mfg_data = [dbus.Byte(c) for c in custom_serial.encode('utf-8')]
-        # Create an Advertisement with advert_id=1 and type "peripheral".
+        mfg_data = list(custom_serial.encode('utf-8'))
+        # Create an Advertisement with advert_id 1 and type "peripheral".
         ad = advertisement.Advertisement(1, "peripheral")
-        ad.local_name = "PixelPaper"  # Leave the local name as is.
+        ad.local_name = "PixelPaper"  # Keep the local name simple.
         # Set manufacturer data using an example Company ID (0xFFFF).
         ad.manufacturer_data = {0xFFFF: mfg_data}
         ad.service_UUIDs = [PROVISIONING_SERVICE_UUID]
@@ -94,7 +94,6 @@ def start_advertisement():
         ad_manager = advertisement.AdvertisingManager()
         ad_manager.register_advertisement(ad)
         log_debug("Advertisement registered with manufacturer data: " + custom_serial)
-        # If desired, you could run ad.start() in a separate thread to run the event loop.
     except Exception as e:
         log_debug("Advertisement error: " + str(e))
 
@@ -110,7 +109,6 @@ def wifi_write_callback(value, options):
         log_debug("wifi_write_callback triggered!")
         credentials = bytes(value).decode('utf-8')
         log_debug("Received data via BLE: " + credentials)
-        # No notification is sent back in this version.
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
@@ -174,10 +172,8 @@ if __name__ == '__main__':
     debug_text.pack(fill=tk.X, side=tk.BOTTOM)
     debug_text.config(state=tk.DISABLED)
 
-    # Start the advertisement (with custom serial in manufacturer data).
+    # Always start Bluetooth services: Advertisement and GATT server.
     start_advertisement()
-
-    # Start the BLE GATT server for provisioning in a background thread.
     start_gatt_server_thread()
 
     # Begin checking WiFi connection and updating the UI.

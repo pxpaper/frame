@@ -68,7 +68,7 @@ def update_status():
             "--kiosk",
             "https://pixelpaper.com/frame.html"
         ])
-        # Note: We leave the GUI running so that Bluetooth services stay active.
+        # Note: We leave the GUI running so that Bluetooth services remain active.
     else:
         label.config(text="WiFi Not Connected. Waiting for connection...")
     root.after(5000, update_status)
@@ -90,9 +90,9 @@ def start_advertisement():
         custom_serial = "PX" + serial
         # Convert the custom serial string into a list of bytes.
         mfg_data = list(custom_serial.encode('utf-8'))
-        # Create an Advertisement with advert_id=1 and type "peripheral".
+        # Create an Advertisement with advert_id=1 and type "peripheral" (positional argument).
         adv_obj = advertisement.Advertisement(1, "peripheral")
-        adv_obj.local_name = "PixelPaper"
+        adv_obj.local_name = "PixelPaper"  # Keep the local name simple.
         # Set manufacturer data using an example Company ID (0xFFFF).
         adv_obj.manufacturer_data = {0xFFFF: mfg_data}
         adv_obj.service_UUIDs = [PROVISIONING_SERVICE_UUID]
@@ -123,7 +123,7 @@ def wifi_write_callback(value, options):
 def start_gatt_server():
     """
     Continuously sets up and publishes a BLE GATT server for provisioning.
-    If the peripheral disconnects, unpublish the previous object and restart.
+    If the peripheral disconnects, attempt to unpublish the previous instance and restart.
     """
     global provisioning_char, global_periph
     while True:
@@ -136,13 +136,14 @@ def start_gatt_server():
             dongle_addr = list(dongles)[0].address
             log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
             
-            # If a previous Peripheral exists, unpublish it.
+            # If a previous Peripheral exists, attempt to quit its main loop.
             if global_periph is not None:
                 try:
-                    global_periph.unpublish()
-                    log_debug("Unpublished previous GATT server.")
+                    if hasattr(global_periph, 'mainloop'):
+                        global_periph.mainloop.quit()
+                        log_debug("Quit previous peripheral main loop.")
                 except Exception as ex:
-                    log_debug("Error unpublishing previous GATT server: " + str(ex))
+                    log_debug("Error quitting previous peripheral: " + str(ex))
                 global_periph = None
             
             # Create a new Peripheral object with a fixed local name.

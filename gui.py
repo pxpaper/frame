@@ -47,8 +47,8 @@ def check_wifi_connection():
 
 def update_status():
     """
-    Update GUI status: if WiFi is connected, launch Chromium (only once)
-    while keeping the Tkinter window running (for Bluetooth functionality).
+    Update GUI status: if WiFi is connected, launch Chromium (once)
+    while keeping the window open.
     """
     global launched
     connected = check_wifi_connection()
@@ -63,10 +63,9 @@ def update_status():
             "--kiosk",
             "https://pixelpaper.com/frame.html"
         ])
-        # Do not destroy the window so that Bluetooth continues to run.
+        # We don't destroy the window here to keep Bluetooth active.
     elif not connected:
         label.config(text="WiFi Not Connected. Waiting for connection...")
-    # Call update_status again in 5 seconds.
     root.after(5000, update_status)
 
 # --- Bluezero Advertisement ---
@@ -78,11 +77,14 @@ def start_advertisement():
     """
     try:
         serial = get_serial_number()
+        # Prepend "PX" to the serial.
         mfg_data = bytearray("PX" + serial, 'utf-8')
-        # Create an advertisement: use ad_type "peripheral" and adapter index 0.
+        # Convert the bytearray to a list of integers.
+        mfg_data_list = list(mfg_data)
+        # Create an advertisement; we assume adapter index 0.
         ad = advertisement.Advertisement("peripheral", 0)
         ad.local_name = "PixelPaper"
-        ad.manufacturer_data = {0xFFFF: mfg_data}  # Using 0xFFFF as example manufacturer ID.
+        ad.manufacturer_data = {0xFFFF: mfg_data_list}  # Use 0xFFFF as a sample manufacturer ID.
         ad.service_UUIDs = [PROVISIONING_SERVICE_UUID]
         ad.register()
         log_debug("Advertisement registered with manufacturer data: PX" + serial)
@@ -94,14 +96,13 @@ def start_advertisement():
 def wifi_write_callback(value, options):
     """
     Write callback for our provisioning characteristic.
-    Called when a mobile app writes WiFi credentials (or other commands) via BLE.
+    Called when a mobile app writes WiFi credentials via BLE.
     'value' is a list of integers representing the bytes sent.
     """
     try:
         log_debug("wifi_write_callback triggered!")
         credentials = bytes(value).decode('utf-8')
         log_debug("Received data via BLE: " + credentials)
-        # No notification is sent back in this version.
     except Exception as e:
         log_debug("Error in wifi_write_callback: " + str(e))
     return
@@ -122,7 +123,7 @@ def start_gatt_server():
             dongle_addr = list(dongles)[0].address
             log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
             
-            # Create a Peripheral object with a fixed local name.
+            # Create a Peripheral with a fixed local name.
             ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
             ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
             provisioning_char = ble_periph.add_characteristic(
@@ -137,7 +138,7 @@ def start_gatt_server():
                 notify_callback=None
             )
             log_debug("Publishing GATT server for provisioning...")
-            ble_periph.publish()  # Blocks until the peripheral event loop stops.
+            ble_periph.publish()  # Blocks until the event loop stops.
             log_debug("GATT server event loop ended (likely due to disconnection).")
         except Exception as e:
             log_debug("Exception in start_gatt_server: " + str(e))
@@ -165,7 +166,7 @@ if __name__ == '__main__':
     debug_text.pack(fill=tk.X, side=tk.BOTTOM)
     debug_text.config(state=tk.DISABLED)
 
-    # Start the advertisement with manufacturer data.
+    # Start the advertisement with the manufacturer data.
     start_advertisement()
 
     # Start the BLE GATT server for provisioning in a background thread.

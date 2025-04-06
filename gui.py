@@ -57,7 +57,7 @@ def update_status():
         launched = True
         subprocess.Popen([
             "firefox-esr",
-            "--kiosk",
+            #"--kiosk",
             "https://pixelpaper.com/frame.html"
         ])
         # Do not destroy the GUI so that BLE stays active.

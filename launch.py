@@ -31,3 +31,4 @@ if __name__ == '__main__':
     update_repo()
     # Launch the GUI application using the venv's python3 interpreter and the absolute path to gui.py.
     subprocess.Popen([VENV_PYTHON, GUI_SCRIPT])
+#hello

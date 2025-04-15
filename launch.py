@@ -13,6 +13,7 @@ VENV_PYTHON = os.path.join(SCRIPT_DIR, "venv", "bin", "python3")
 GUI_SCRIPT = os.path.join(SCRIPT_DIR, "gui.py")
 
 def update_repo():
+    print("Updating repository...")
     try:
         # Pull the latest changes from GitHub in the proper directory.
         result = subprocess.run(

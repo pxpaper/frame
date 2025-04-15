@@ -16,20 +16,6 @@ PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 PROVISIONING_CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
 SERIAL_CHAR_UUID          = "12345678-1234-5678-1234-56789abcdef2"
 
-def start_auto_agent():
-    """
-    Automatically start auto_agent.py as a separate process.
-    Note: This uses 'sudo' since your agent requires elevated permissions.
-    """
-    try:
-        # Start auto_agent.py. The current working directory must be the one containing auto_agent.py.
-        process = subprocess.Popen(["sudo", "python3", "auto_agent.py"],
-                                   stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE)
-        print("auto_agent.py started with PID", process.pid)
-    except Exception as e:
-        print("Error starting auto_agent.py:", e)
-
 def get_serial_number():
     try:
         with open('/proc/device-tree/serial-number', 'r') as f:
@@ -154,9 +140,6 @@ def start_gatt_server_thread():
 # --- Main GUI Setup ---
 
 if __name__ == '__main__':
-    # Start the auto_agent.py process automatically.
-    start_auto_agent()
-
     root = tk.Tk()
     root.title("Frame Status")
     root.attributes('-fullscreen', False)

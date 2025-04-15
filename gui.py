@@ -56,8 +56,8 @@ def update_status():
         log_debug("WiFi connected, launching browser.")
         launched = True
         subprocess.Popen([
-            "firefox-esr",
-            #"--kiosk",
+            "chromium-browser",
+            "--kiosk",
             "https://pixelpaper.com/frame.html"
         ])
         # Do not destroy the GUI so that BLE stays active.

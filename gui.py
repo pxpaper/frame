@@ -142,7 +142,7 @@ def start_gatt_server_thread():
 if __name__ == '__main__':
     root = tk.Tk()
     root.title("Frame Status")
-    root.attributes('-fullscreen', True)
+    root.attributes('-fullscreen', False)
 
     # Main status label.
     label = tk.Label(root, text="Checking WiFi...", font=("Helvetica", 48))

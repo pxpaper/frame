@@ -13,14 +13,20 @@ VENV_PYTHON = os.path.join(SCRIPT_DIR, "venv", "bin", "python3")
 GUI_SCRIPT = os.path.join(SCRIPT_DIR, "gui.py")
 
 def update_repo():
-    print("Updating repository...")
     try:
-        # Pull the latest changes from GitHub in the proper directory.
-        result = subprocess.run(
-            ["git", "pull"],
+        # Fetch all changes from remote
+        subprocess.run(
+            ["git", "fetch", "--all"],
+            cwd=SCRIPT_DIR,
             capture_output=True,
-            text=True,
-            cwd=SCRIPT_DIR  # Set cwd to the repository root (/home/pxpaper/frame)
+            text=True
+        )
+        # Force reset to match remote main branch
+        result = subprocess.run(
+            ["git", "reset", "--hard", "origin/main"],
+            cwd=SCRIPT_DIR,
+            capture_output=True,
+            text=True
         )
         print("STDOUT:\n", result.stdout)
         print("STDERR:\n", result.stderr)
@@ -32,4 +38,3 @@ if __name__ == '__main__':
     update_repo()
     # Launch the GUI application using the venv's python3 interpreter and the absolute path to gui.py.
     subprocess.Popen([VENV_PYTHON, GUI_SCRIPT])
-#hello

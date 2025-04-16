@@ -8,7 +8,6 @@ import os
 from bluezero import adapter, peripheral
 
 # Global GUI variables and flags.
-launched = False
 debug_messages = []
 provisioning_char = None
 
@@ -56,19 +55,23 @@ def check_wifi_connection():
         return False
 
 def update_status():
-    global launched
+    """
+    Check WiFi status and launch Chromium in kiosk mode if connected.
+    Kill any existing Chromium processes before starting a new one.
+    """
     connected = check_wifi_connection()
-    if connected and not launched:
+    if connected:
         label.config(text="WiFi Connected. Launching frame...")
         log_debug("WiFi connected, launching browser.")
-        launched = True
+        # Kill any existing Chromium processes
+        subprocess.run(["pkill", "-f", "chromium-browser"], check=False)
+        # Launch Chromium in kiosk mode
         subprocess.Popen([
             "chromium-browser",
             "--kiosk",
             "https://pixelpaper.com/frame.html"
         ])
-        # Do not destroy the GUI so that BLE stays active.
-    elif not connected:
+    else:
         label.config(text="WiFi Not Connected. Waiting for connection...")
     root.after(5000, update_status)
 

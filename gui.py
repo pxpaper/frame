@@ -72,10 +72,61 @@ def update_status():
     root.after(5000, update_status)
 
 def handle_wifi_data(data):
-    # Process WiFi-related data.
-    log_debug("Handling WiFi data: " + data)
-    # Add code for writing WiFi credentials or updating configuration here.
-    # ...
+    """
+    Expects `data` in the form "<SSID>;PASS:<password>".
+    Uses wpa_cli to add (or update) the network, enable it,
+    save the config, and reconfigure wpa_supplicant.
+    """
+    try:
+        # Parse out SSID and password
+        if ';PASS:' not in data:
+            log_debug(f"Malformed WIFI data: {data}")
+            return
+        ssid, password = data.split(';PASS:', 1)
+        ssid = ssid.strip()
+        password = password.strip()
+        log_debug(f"Configuring WiFi: SSID={ssid}")
+
+        # 1) Add a new network
+        out = subprocess.check_output(
+            ['wpa_cli', '-i', 'wlan0', 'add_network'],
+            text=True, stderr=subprocess.STDOUT
+        ).strip()
+        net_id = out
+        log_debug(f"  → Created network id {net_id}")
+
+        # 2) Set SSID and PSK for that network
+        subprocess.check_call(
+            ['wpa_cli', '-i', 'wlan0', 'set_network', net_id, 'ssid', f'"{ssid}"']
+        )
+        subprocess.check_call(
+            ['wpa_cli', '-i', 'wlan0', 'set_network', net_id, 'psk', f'"{password}"']
+        )
+        log_debug("  → SSID and PSK set")
+
+        # 3) Enable the network
+        subprocess.check_call(
+            ['wpa_cli', '-i', 'wlan0', 'enable_network', net_id]
+        )
+        log_debug(f"  → Enabled network {net_id}")
+
+        # 4) Save the configuration so it persists across reboots
+        subprocess.check_call(
+            ['wpa_cli', '-i', 'wlan0', 'save_config']
+        )
+        log_debug("  → Saved wpa_supplicant configuration")
+
+        # 5) Tell wpa_supplicant to reconfigure immediately
+        subprocess.check_call(
+            ['wpa_cli', '-i', 'wlan0', 'reconfigure']
+        )
+        log_debug("  → Reconfigured wpa_supplicant; should join new network shortly")
+
+    except subprocess.CalledProcessError as e:
+        log_debug(f"wpa_cli error ({e.returncode}): {e.output}")
+    except Exception as e:
+        log_debug(f"Error configuring WiFi: {e}")
+
 
 def handle_orientation_change(data):
     # Process orientation change command.

@@ -8,6 +8,7 @@ import os
 from bluezero import adapter, peripheral
 
 # Global GUI variables and flags.
+launched = False
 debug_messages = []
 provisioning_char = None
 
@@ -56,23 +57,40 @@ def check_wifi_connection():
 
 def update_status():
     """
-    Check WiFi status and launch Chromium in kiosk mode if connected.
-    Kill any existing Chromium processes before starting a new one.
+    Check WiFi status and manage Chromium browser.
+    If WiFi is disconnected, close Chromium and reset the launched flag.
+    If Chromium crashes, reset the launched flag to restart it.
     """
+    global launched
     connected = check_wifi_connection()
+
     if connected:
-        label.config(text="WiFi Connected. Launching frame...")
-        log_debug("WiFi connected, launching browser.")
-        # Kill any existing Chromium processes
-        subprocess.run(["pkill", "-f", "chromium-browser"], check=False)
-        # Launch Chromium in kiosk mode
-        subprocess.Popen([
-            "chromium-browser",
-            "--kiosk",
-            "https://pixelpaper.com/frame.html"
-        ])
+        if not launched:
+            label.config(text="WiFi Connected. Launching frame...")
+            log_debug("WiFi connected, launching browser.")
+            # Kill any existing Chromium processes
+            subprocess.run(["pkill", "-f", "chromium-browser"], check=False)
+            # Launch Chromium in kiosk mode
+            chromium_process = subprocess.Popen([
+                "chromium-browser",
+                "--kiosk",
+                "https://pixelpaper.com/frame.html"
+            ])
+            launched = True
+        else:
+            # Check if Chromium has crashed
+            if chromium_process.poll() is not None:  # poll() returns None if still running
+                log_debug("Chromium crashed. Restarting...")
+                launched = False
     else:
-        label.config(text="WiFi Not Connected. Waiting for connection...")
+        if launched:
+            label.config(text="WiFi Not Connected. Waiting for connection...")
+            log_debug("WiFi disconnected. Closing browser.")
+            # Kill Chromium and reset the launched flag
+            subprocess.run(["pkill", "-f", "chromium-browser"], check=False)
+            launched = False
+
+    # Schedule the next status check
     root.after(5000, update_status)
 
 import time

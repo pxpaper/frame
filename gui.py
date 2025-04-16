@@ -79,45 +79,58 @@ import subprocess
 
 def handle_wifi_data(data):
     """
-    Process WiFi-related data of the form "SSID;PASS:password"
-    and use nmcli to connect and set autoconnect.
+    Process data like "MySSID;PASS:supersecret" and
+    configure NetworkManager non‑interactively.
     """
     log_debug("Handling WiFi data: " + data)
     try:
-        # Parse SSID and password
+        # 1. Parse SSID & password
         parts = data.split(';')
         ssid = parts[0]
         password = None
-        for part in parts[1:]:
-            if part.upper().startswith("PASS:"):
-                password = part.split(":", 1)[1]
+        for p in parts[1:]:
+            if p.upper().startswith("PASS:"):
+                password = p.split(":", 1)[1]
         if not ssid or password is None:
-            raise ValueError("Invalid WiFi data format")
+            raise ValueError("Invalid format, expected SSID;PASS:password")
 
-        # 1. Try to connect directly (this will create a new NM connection or
-        #    use an existing one named exactly as the SSID).
-        log_debug(f"Attempting nmcli device wifi connect {ssid}")
-        result = subprocess.run(
-            ["nmcli", "device", "wifi", "connect", ssid, "password", password],
-            check=True, capture_output=True, text=True
-        )
-        log_debug("nmcli connect output: " + result.stdout.strip())
-
-        # 2. Ensure that this connection will autoconnect on boot.
-        #    NM uses the connection 'id' which by default matches the SSID.
-        log_debug(f"Setting connection '{ssid}' to autoconnect")
+        # 2. Delete any old profile with this SSID
         subprocess.run(
-            ["nmcli", "connection", "modify", ssid, "connection.autoconnect", "yes"],
-            check=True, capture_output=True, text=True
+            ["nmcli", "connection", "delete", ssid],
+            check=False,  # ignore errors if it didn’t exist
+            capture_output=True, text=True
         )
 
-        log_debug(f"Successfully connected and enabled autoconnect to '{ssid}'")
+        # 3. Create a new connection profile with embedded PSK
+        #    This will write a /etc/NetworkManager/system-connections/<ssid>.nmconnection
+        subprocess.run([
+            "nmcli", "connection", "add",
+            "type", "wifi",
+            "ifname", "wlan0",           # adjust if your interface is different
+            "con-name", ssid,
+            "ssid", ssid,
+            "wifi-sec.key-mgmt", "wpa-psk",
+            "wifi-sec.psk", password,
+            "connection.autoconnect", "yes"
+        ], check=True, capture_output=True, text=True)
 
-    except subprocess.CalledProcessError as nm_err:
-        log_debug(f"nmcli error ({nm_err.returncode}): {nm_err.stderr.strip()}")
+        log_debug(f"Created and configured connection profile for '{ssid}'")
+
+        # 4. Bring the connection up
+        result = subprocess.run(
+            ["nmcli", "connection", "up", ssid],
+            check=True, capture_output=True, text=True
+        )
+        log_debug(f"Connection up: {result.stdout.strip()}")
+
+    except subprocess.CalledProcessError as e:
+        # nmcli returned a non‑zero exit code (e.g. wrong password, radio off, etc.)
+        err = e.stderr.strip() or e.stdout.strip()
+        log_debug(f"nmcli error (code {e.returncode}): {err}")
     except Exception as e:
         log_debug("Failed to configure WiFi: " + str(e))
 
+ 
 
 def handle_orientation_change(data):
     # Process orientation change command.

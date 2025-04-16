@@ -79,79 +79,44 @@ import subprocess
 
 def handle_wifi_data(data):
     """
-    Expects data in the form "<SSID>;PASS:<password>".
-    Uses wpa_cli to:
-      • remove old blocks for this SSID
-      • add & configure a new block
-      • select & enable it exclusively
-      • save & reconfigure
-    Then brings up the interface and runs dhclient to get an IP.
+    Process WiFi-related data of the form "SSID;PASS:password"
+    and use nmcli to connect and set autoconnect.
     """
+    log_debug("Handling WiFi data: " + data)
     try:
-        # 1) Parse SSID/password
-        if ';PASS:' not in data:
-            log_debug(f"Malformed WIFI data: {data}")
-            return
-        ssid, password = data.split(';PASS:', 1)
-        ssid = ssid.strip()
-        password = password.strip()
-        log_debug(f"Configuring WiFi: SSID={ssid}")
+        # Parse SSID and password
+        parts = data.split(';')
+        ssid = parts[0]
+        password = None
+        for part in parts[1:]:
+            if part.upper().startswith("PASS:"):
+                password = part.split(":", 1)[1]
+        if not ssid or password is None:
+            raise ValueError("Invalid WiFi data format")
 
-        # 2) Remove any existing entries for this SSID
-        out = subprocess.check_output(
-            ['wpa_cli', '-i', 'wlan0', 'list_networks'],
-            text=True
+        # 1. Try to connect directly (this will create a new NM connection or
+        #    use an existing one named exactly as the SSID).
+        log_debug(f"Attempting nmcli device wifi connect {ssid}")
+        result = subprocess.run(
+            ["nmcli", "device", "wifi", "connect", ssid, "password", password],
+            check=True, capture_output=True, text=True
         )
-        for line in out.splitlines()[1:]:
-            parts = line.split()
-            if len(parts) >= 2 and parts[1] == ssid:
-                old_id = parts[0]
-                subprocess.check_call(['wpa_cli', '-i', 'wlan0', 'remove_network', old_id])
-                log_debug(f"  → Removed old network id {old_id}")
+        log_debug("nmcli connect output: " + result.stdout.strip())
 
-        # 3) Add & configure new block
-        net_id = subprocess.check_output(['wpa_cli', '-i', 'wlan0', 'add_network'], text=True).strip()
-        log_debug(f"  → Created network id {net_id}")
+        # 2. Ensure that this connection will autoconnect on boot.
+        #    NM uses the connection 'id' which by default matches the SSID.
+        log_debug(f"Setting connection '{ssid}' to autoconnect")
+        subprocess.run(
+            ["nmcli", "connection", "modify", ssid, "connection.autoconnect", "yes"],
+            check=True, capture_output=True, text=True
+        )
 
-        subprocess.check_call(['wpa_cli', '-i', 'wlan0', 'set_network', net_id, 'ssid', f'"{ssid}"'])
-        subprocess.check_call(['wpa_cli', '-i', 'wlan0', 'set_network', net_id, 'psk', f'"{password}"'])
-        log_debug("  → SSID and PSK set")
+        log_debug(f"Successfully connected and enabled autoconnect to '{ssid}'")
 
-        # 4) Disable all, then select & enable this one
-        subprocess.check_call(['wpa_cli', '-i', 'wlan0', 'disable_network', 'all'])
-        subprocess.check_call(['wpa_cli', '-i', 'wlan0', 'select_network', net_id])
-        subprocess.check_call(['wpa_cli', '-i', 'wlan0', 'enable_network', net_id])
-        log_debug(f"  → Selected and enabled network {net_id}")
-
-        # 5) Persist & reconfigure wpa_supplicant
-        subprocess.check_call(['wpa_cli', '-i', 'wlan0', 'save_config'])
-        subprocess.check_call(['wpa_cli', '-i', 'wlan0', 'reconfigure'])
-        log_debug("  → Saved config and reconfigured wpa_supplicant")
-
-        # 6) Bring up interface and run dhclient
-        log_debug("  → Bringing wlan0 up and requesting DHCP lease…")
-        subprocess.check_call(['ip', 'link', 'set', 'wlan0', 'up'])
-        dhcp_out = subprocess.check_output(['dhclient', '-v', 'wlan0'], stderr=subprocess.STDOUT, text=True)
-        log_debug(f"  → dhclient output:\n{dhcp_out}")
-
-        # 7) Verify IP assignment
-        for i in range(10):
-            status = subprocess.check_output(['ip', 'addr', 'show', 'wlan0'], text=True)
-            for line in status.splitlines():
-                if 'inet ' in line:
-                    ip = line.strip().split()[1]
-                    log_debug(f"✅ wlan0 has IP: {ip}")
-                    return
-            log_debug(f"…waiting for IP (attempt {i+1})")
-            time.sleep(1)
-
-        log_debug("❌ Failed to obtain an IP address within timeout")
-
-    except subprocess.CalledProcessError as e:
-        log_debug(f"Command failed ({e.returncode}):\n{e.output}")
+    except subprocess.CalledProcessError as nm_err:
+        log_debug(f"nmcli error ({nm_err.returncode}): {nm_err.stderr.strip()}")
     except Exception as e:
-        log_debug(f"Error configuring WiFi: {e}")
-
+        log_debug("Failed to configure WiFi: " + str(e))
 
 
 def handle_orientation_change(data):

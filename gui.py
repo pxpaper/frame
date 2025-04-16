@@ -93,12 +93,6 @@ def update_status():
     # Schedule the next status check
     root.after(5000, update_status)
 
-import time
-import subprocess
-
-import time
-import subprocess
-
 def handle_wifi_data(data):
     """
     Process data like "MySSID;PASS:supersecret" and

@@ -17,6 +17,8 @@ PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 PROVISIONING_CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
 SERIAL_CHAR_UUID          = "12345678-1234-5678-1234-56789abcdef2"
 
+chromium_cmd = ["chromium-browser", "--kiosk", "https://pixelpaper.com/frame.html"]
+
 def get_serial_number():
     try:
         with open('/proc/device-tree/serial-number', 'r') as f:
@@ -57,41 +59,23 @@ def check_wifi_connection():
 
 def update_status():
     """
-    Check WiFi status and manage Chromium browser.
-    If WiFi is disconnected, close Chromium and reset the launched flag.
-    If Chromium crashes, reset the launched flag to restart it.
+    Every 5 sec: if WiFi is up, kill any existing Chromium and start a fresh one.
+    If WiFi is down, kill Chromium.
     """
-    global launched
-    connected = check_wifi_connection()
-
-    if connected:
-        if not launched:
-            label.config(text="WiFi Connected. Launching frame...")
-            log_debug("WiFi connected, launching browser.")
-            # Kill any existing Chromium processes
+    try:
+        if check_wifi_connection():
+            label.config(text="WiFi Connected. Launching frame…")
+            log_debug("WiFi connected; restarting Chromium.")
             subprocess.run(["pkill", "-f", "chromium-browser"], check=False)
-            # Launch Chromium in kiosk mode
-            chromium_process = subprocess.Popen([
-                "chromium-browser",
-                "--kiosk",
-                "https://pixelpaper.com/frame.html"
-            ])
-            launched = True
+            subprocess.Popen(chromium_cmd)
         else:
-            # Check if Chromium has crashed
-            if chromium_process.poll() is not None:  # poll() returns None if still running
-                log_debug("Chromium crashed. Restarting...")
-                launched = False
-    else:
-        if launched:
-            label.config(text="WiFi Not Connected. Waiting for connection...")
-            log_debug("WiFi disconnected. Closing browser.")
-            # Kill Chromium and reset the launched flag
+            label.config(text="WiFi Not Connected. Waiting…")
+            log_debug("WiFi down; killing Chromium.")
             subprocess.run(["pkill", "-f", "chromium-browser"], check=False)
-            launched = False
-
-    # Schedule the next status check
-    root.after(5000, update_status)
+    except Exception as e:
+        log_debug("Error in update_status: " + str(e))
+    finally:
+        root.after(5000, update_status)
 
 def handle_wifi_data(data):
     """

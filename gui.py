@@ -133,10 +133,33 @@ def handle_wifi_data(data):
  
 
 def handle_orientation_change(data):
-    # Process orientation change command.
-    log_debug("Handling orientation change: " + data)
-    # Add code for changing orientation here.
-    # ...
+    """
+    data: one of "0", "90", "180", "270"
+    Writes a kanshi config & relaunches kanshi to rotate the screen.
+    """
+    output = "HDMI-A-1"
+
+    # Step 1: generate the kanshi config
+    #  (mode@freq must match your current mode/frequency)
+    cfg = f"""profile {{
+    output {output} enable mode 1920x1080@74.986 position 0,0 transform {data}
+}}
+"""
+    cfg_path = os.path.expanduser("~/.config/kanshi/config")
+    os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
+    with open(cfg_path, "w") as f:
+        f.write(cfg)
+    os.chmod(cfg_path, 0o600)
+
+    # Step 2: kill the old kanshi and start a fresh one
+    #  so it picks up the new config immediately
+    subprocess.run(["killall", "kanshi"], check=False)
+    subprocess.Popen(
+        ["kanshi", "-c", cfg_path],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+
+    log_debug(f"Rotated {output} → {data}° via kanshi")
 
 def ble_callback(value, options):
     try:

@@ -35,6 +35,18 @@ def log_debug(message):
     debug_text.config(state=tk.DISABLED)
     print(message)
 
+def disable_pairing():
+    """
+    Runs a bluetoothctl command to permanently disable pairing.
+    This will make the adapter non-pairable after startup.
+    """
+    try:
+        # Send the commands "pairable off" and "quit" to bluetoothctl.
+        output = subprocess.check_output("echo -e 'pairable off\nquit' | bluetoothctl", shell=True)
+        log_debug("Pairing disabled: " + output.decode().strip())
+    except Exception as e:
+        log_debug("Failed to disable pairing: " + str(e))
+
 def check_wifi_connection():
     """Test for internet connectivity by connecting to Google DNS."""
     try:
@@ -153,9 +165,13 @@ if __name__ == '__main__':
     debug_text.pack(fill=tk.X, side=tk.BOTTOM)
     debug_text.config(state=tk.DISABLED)
 
+    # Disable pairing on startup.
+    disable_pairing()
+
     # Always start the BLE GATT server.
     start_gatt_server_thread()
 
     # Begin checking WiFi connection and updating the UI.
     update_status()
+
     root.mainloop()

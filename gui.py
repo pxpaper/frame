@@ -74,6 +74,9 @@ def update_status():
 import time
 import subprocess
 
+import time
+import subprocess
+
 def handle_wifi_data(data):
     """
     Expects data in the form "<SSID>;PASS:<password>".
@@ -82,10 +85,10 @@ def handle_wifi_data(data):
       • add & configure a new block
       • select & enable it exclusively
       • save & reconfigure
-      • poll for connection state
+    Then brings up the interface and runs dhclient to get an IP.
     """
     try:
-        # 1) Parse out SSID and password
+        # 1) Parse SSID/password
         if ';PASS:' not in data:
             log_debug(f"Malformed WIFI data: {data}")
             return
@@ -103,64 +106,49 @@ def handle_wifi_data(data):
             parts = line.split()
             if len(parts) >= 2 and parts[1] == ssid:
                 old_id = parts[0]
-                subprocess.check_call(
-                    ['wpa_cli', '-i', 'wlan0', 'remove_network', old_id]
-                )
+                subprocess.check_call(['wpa_cli', '-i', 'wlan0', 'remove_network', old_id])
                 log_debug(f"  → Removed old network id {old_id}")
 
-        # 3) Add a fresh network block
-        net_id = subprocess.check_output(
-            ['wpa_cli', '-i', 'wlan0', 'add_network'],
-            text=True
-        ).strip()
+        # 3) Add & configure new block
+        net_id = subprocess.check_output(['wpa_cli', '-i', 'wlan0', 'add_network'], text=True).strip()
         log_debug(f"  → Created network id {net_id}")
 
-        # 4) Set SSID and PSK
-        subprocess.check_call(
-            ['wpa_cli', '-i', 'wlan0', 'set_network', net_id, 'ssid', f'"{ssid}"']
-        )
-        subprocess.check_call(
-            ['wpa_cli', '-i', 'wlan0', 'set_network', net_id, 'psk', f'"{password}"']
-        )
+        subprocess.check_call(['wpa_cli', '-i', 'wlan0', 'set_network', net_id, 'ssid', f'"{ssid}"'])
+        subprocess.check_call(['wpa_cli', '-i', 'wlan0', 'set_network', net_id, 'psk', f'"{password}"'])
         log_debug("  → SSID and PSK set")
 
-        # 5) Disable all, then select & enable just this one
-        subprocess.check_call(
-            ['wpa_cli', '-i', 'wlan0', 'disable_network', 'all']
-        )
-        subprocess.check_call(
-            ['wpa_cli', '-i', 'wlan0', 'select_network', net_id]
-        )
-        subprocess.check_call(
-            ['wpa_cli', '-i', 'wlan0', 'enable_network', net_id]
-        )
+        # 4) Disable all, then select & enable this one
+        subprocess.check_call(['wpa_cli', '-i', 'wlan0', 'disable_network', 'all'])
+        subprocess.check_call(['wpa_cli', '-i', 'wlan0', 'select_network', net_id])
+        subprocess.check_call(['wpa_cli', '-i', 'wlan0', 'enable_network', net_id])
         log_debug(f"  → Selected and enabled network {net_id}")
 
-        # 6) Persist & reconfigure
-        subprocess.check_call(
-            ['wpa_cli', '-i', 'wlan0', 'save_config']
-        )
-        subprocess.check_call(
-            ['wpa_cli', '-i', 'wlan0', 'reconfigure']
-        )
+        # 5) Persist & reconfigure wpa_supplicant
+        subprocess.check_call(['wpa_cli', '-i', 'wlan0', 'save_config'])
+        subprocess.check_call(['wpa_cli', '-i', 'wlan0', 'reconfigure'])
         log_debug("  → Saved config and reconfigured wpa_supplicant")
 
-        # 7) Poll for connection success
+        # 6) Bring up interface and run dhclient
+        log_debug("  → Bringing wlan0 up and requesting DHCP lease…")
+        subprocess.check_call(['ip', 'link', 'set', 'wlan0', 'up'])
+        dhcp_out = subprocess.check_output(['dhclient', '-v', 'wlan0'], stderr=subprocess.STDOUT, text=True)
+        log_debug(f"  → dhclient output:\n{dhcp_out}")
+
+        # 7) Verify IP assignment
         for i in range(10):
-            status = subprocess.check_output(
-                ['wpa_cli', '-i', 'wlan0', 'status'],
-                text=True
-            )
-            log_debug(f" status: {status.splitlines()[0]}")
-            if 'wpa_state=COMPLETED' in status:
-                log_debug("✅ Connected to WiFi!")
-                return
+            status = subprocess.check_output(['ip', 'addr', 'show', 'wlan0'], text=True)
+            for line in status.splitlines():
+                if 'inet ' in line:
+                    ip = line.strip().split()[1]
+                    log_debug(f"✅ wlan0 has IP: {ip}")
+                    return
+            log_debug(f"…waiting for IP (attempt {i+1})")
             time.sleep(1)
 
-        log_debug("⚠️  Failed to join network within timeout")
+        log_debug("❌ Failed to obtain an IP address within timeout")
 
     except subprocess.CalledProcessError as e:
-        log_debug(f"wpa_cli error ({e.returncode}): {e.output}")
+        log_debug(f"Command failed ({e.returncode}):\n{e.output}")
     except Exception as e:
         log_debug(f"Error configuring WiFi: {e}")
 

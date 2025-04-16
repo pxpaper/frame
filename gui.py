@@ -4,6 +4,7 @@ import socket
 import subprocess
 import time
 import threading
+import os
 from bluezero import adapter, peripheral
 
 # Global GUI variables and flags.

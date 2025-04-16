@@ -43,7 +43,7 @@ def disable_pairing():
     try:
         result = subprocess.run(
             ["bluetoothctl"],
-            input="pairable off\nquit\n",
+            input="pairable no\nquit\n",
             text=True,
             capture_output=True,
             check=True

@@ -43,7 +43,7 @@ def disable_pairing():
             capture_output=True,
             check=True
         )
-        log_debug("Pairing disabled: " + result.stdout.strip())
+        #log_debug("Pairing disabled: " + result.stdout.strip())
     except Exception as e:
         log_debug("Failed to disable pairing: " + str(e))
 

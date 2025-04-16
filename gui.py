@@ -37,15 +37,21 @@ def log_debug(message):
 
 def disable_pairing():
     """
-    Runs a bluetoothctl command to permanently disable pairing.
-    This will make the adapter non-pairable after startup.
+    Runs bluetoothctl with input to disable pairing.
+    This should avoid any issues with escape sequences.
     """
     try:
-        # Send the commands "pairable off" and "quit" to bluetoothctl.
-        output = subprocess.check_output("echo -e 'pairable off\nquit' | bluetoothctl", shell=True)
-        log_debug("Pairing disabled: " + output.decode().strip())
+        result = subprocess.run(
+            ["bluetoothctl"],
+            input="pairable off\nquit\n",
+            text=True,
+            capture_output=True,
+            check=True
+        )
+        log_debug("Pairing disabled: " + result.stdout.strip())
     except Exception as e:
         log_debug("Failed to disable pairing: " + str(e))
+
 
 def check_wifi_connection():
     """Test for internet connectivity by connecting to Google DNS."""

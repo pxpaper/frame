@@ -63,6 +63,7 @@ def update_status():
     """
     global launched
     connected = check_wifi_connection()
+    log_debug("WiFi connected: " + str(connected))
 
     if connected:
         if not launched:

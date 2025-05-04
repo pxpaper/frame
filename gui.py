@@ -173,7 +173,7 @@ def handle_orientation_change(data):
         ["kanshi", "-c", cfg_path],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
-    log_debug(f"Rotated {output} → {data}° via kanshi"
+    log_debug(f"Rotated {output} → {data}° via kanshi")
 
 def ble_callback(value, options):
     try:

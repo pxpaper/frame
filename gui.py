@@ -5,7 +5,6 @@ import subprocess
 import time
 import threading
 import os
-import re
 from bluezero import adapter, peripheral
 
 # Global GUI variables and flags.
@@ -137,31 +136,28 @@ def handle_wifi_data(data):
     except Exception as e:
         log_debug("Failed to configure WiFi: " + str(e))
 
-
 def handle_orientation_change(data):
     """
-    data: one of "normal","90","180","270"
-    Dynamically reads current mode@freq from wlr-randr, writes a kanshi config,
-    and restarts kanshi to apply the new transform.
+    data: one of "normal", "90", "180", "270"
+    1. Calls wlr-randr|grep|awk to grab the current mode@freq
+    2. Writes out ~/.config/kanshi/config
+    3. Restarts kanshi with that config
     """
-    output = "HDMI-A-1"  # adjust if your new monitor uses a different name
+    output = "HDMI-A-1"  # adjust if your output name is different
 
-    # 1) Query wlr-randr and pull out the current mode and freq
+    # 1) grab current mode@freq
     try:
-        wr = subprocess.check_output(["wlr-randr"], text=True)
-        # look for a line like "1920x1080 px, 60.000000 Hz (current)"
-        m = re.search(rf"{output}.*\n\s+(\d+x\d+)\s+px,\s+([\d\.]+)\s+Hz\s+\(current\)", wr)
-        if not m:
-            raise ValueError("couldn't find current mode in wlr-randr output")
-        mode, freq = m.group(1), m.group(2)
-        freq = freq[:7]  # trim to 3 decimal places, if you like
-    except Exception as e:
-        log_debug(f"⚠️ Failed to parse mode/freq: {e}")
+        mode = subprocess.check_output(
+            "wlr-randr | grep '(current)' | awk '{print $1\"@\"$3}'",
+            shell=True, text=True
+        ).strip()
+    except subprocess.CalledProcessError as e:
+        log_debug(f"Failed to detect current mode: {e}")
         return
 
-    # 2) Write out the kanshi config
+    # 2) write kanshi config
     cfg = f"""profile {{
-    output {output} enable mode {mode}@{freq} position 0,0 transform {data}
+    output {output} enable mode {mode} position 0,0 transform {data}
 }}
 """
     cfg_path = os.path.expanduser("~/.config/kanshi/config")
@@ -169,13 +165,15 @@ def handle_orientation_change(data):
     with open(cfg_path, "w") as f:
         f.write(cfg)
     os.chmod(cfg_path, 0o600)
-    log_debug(f"Wrote kanshi config: mode {mode}@{freq}, transform {data}")
+    log_debug(f"Wrote kanshi config: mode={mode}, transform={data}")
 
-    # 3) Restart kanshi so it picks up the new config
+    # 3) restart kanshi so it picks up the new config
     subprocess.run(["killall", "kanshi"], check=False)
-    subprocess.Popen(["kanshi", "-c", cfg_path],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    log_debug(f"Rotated {output} → {data}° via kanshi")
+    subprocess.Popen(
+        ["kanshi", "-c", cfg_path],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+    log_debug(f"Rotated {output} → {data}° via kanshi"
 
 def ble_callback(value, options):
     try:

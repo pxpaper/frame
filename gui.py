@@ -84,65 +84,101 @@ def update_status():
     finally:
         root.after(5000, update_status)
 
-def handle_wifi_data(data: str):
-    # -----------------------------------------
-    # 1. parse incoming payload
-    # -----------------------------------------
-    ssid, _, raw_pass = data.partition(";PASS:")
-    ssid      = ssid.strip()
-    password  = raw_pass.strip()
+def handle_wifi_data(payload: str):
+    """
+    BLE payload  →  'MySSID;PASS:supersecret'
 
+    Rules
+    -----
+    • If wlan0 is already on SSID *and* PSK matches → do nothing.
+    • Else:
+        – If profile exists  →  `nmcli connection modify …`
+          (this clears the “bad password” flag that triggers the dialog)
+        – If not             →  `nmcli connection add …`
+        – Finally:
+              1. disconnect wlan0   (clears any half‑open WPA session)
+              2. bring profile up
+    All commands run as root, so no PolicyKit dialog ever appears.
+    """
+    log_debug(f"WIFI payload received: {payload}")
+
+    # ── 1. parse ──────────────────────────────────────────
+    if ";PASS:" not in payload:
+        log_debug("✗ Invalid Wi‑Fi payload (need SSID;PASS:psk)")
+        return
+    ssid, password = payload.split(";PASS:", 1)
+    ssid, password = ssid.strip(), password.strip()
     if not ssid or not password:
-        log_debug("Bad WIFI payload (need SSID;PASS:psk)")
+        log_debug("✗ SSID or password empty")
         return
 
-    # -----------------------------------------
-    # 2. is that network already up *with* the
-    #    same PSK? if so, bail early.
-    # -----------------------------------------
     try:
+        # ── 2. skip if already connected with same PSK ─────
         active = subprocess.check_output(
-            ["nmcli", "-t", "-f", "NAME,DEVICE,ACTIVE", "connection", "show", "--active"],
+            ["nmcli", "-t", "-f", "NAME,DEVICE,ACTIVE",
+             "connection", "show", "--active"],
             text=True
         )
         for line in active.splitlines():
             name, dev, active_flag = line.split(":")
             if dev == "wlan0" and active_flag == "yes" and name == ssid:
-                # grab the current PSK for that connection
-                props = subprocess.check_output(
-                    ["nmcli", "-s", "-g", "802-11-wireless-security.psk", "connection", "show", ssid],
+                current_psk = subprocess.check_output(
+                    ["nmcli", "--show-secrets", "-g",
+                     "802-11-wireless-security.psk",
+                     "connection", "show", ssid],
                     text=True
                 ).strip()
-                if props == password:
-                    log_debug(f"Wi‑Fi already connected to '{ssid}' with correct PSK → skip")
+                if current_psk == password:
+                    log_debug(f"✓ Already on “{ssid}” with correct PSK → nothing to do")
                     return
-    except subprocess.CalledProcessError as e:
-        log_debug(f"nmcli active‑check failed: {e.stderr or e.stdout}")
+                log_debug("PSK has changed – updating profile")
+                break  # fall through to update section
 
-    # -----------------------------------------
-    # 3. *only now* rewrite the profile
-    # -----------------------------------------
-    try:
-        subprocess.run(["nmcli", "connection", "delete", ssid], check=False)
+        # ── 3. update or create the profile ────────────────
+        # Does profile exist?
+        has_profile = subprocess.run(
+            ["nmcli", "-t", "-f", "NAME", "connection", "show", ssid],
+            capture_output=True, text=True
+        ).returncode == 0
 
-        subprocess.run(
-            [
+        if has_profile:
+            subprocess.run([
+                "nmcli", "connection", "modify", ssid,
+                # key‑mgmt *must* be set before PSK for NM >= 1.40
+                "802-11-wireless-security.key-mgmt", "wpa-psk",
+                "802-11-wireless-security.psk", password,
+                "802-11-wireless-security.psk-flags", "0",
+                "connection.autoconnect", "yes",
+            ], check=True)
+            log_debug(f"✓ Updated stored PSK for “{ssid}”")
+        else:
+            subprocess.run([
                 "nmcli", "connection", "add",
                 "type", "wifi",
                 "ifname", "wlan0",
                 "con-name", ssid,
                 "ssid", ssid,
                 "wifi-sec.key-mgmt", "wpa-psk",
-                "wifi-sec.psk",      password,
-                "connection.autoconnect", "yes"
-            ],
+                "wifi-sec.psk", password,
+                "connection.autoconnect", "yes",
+            ], check=True)
+            log_debug(f"✓ Created new connection profile “{ssid}”")
+
+        # ── 4. force a clean reconnect ─────────────────────
+        subprocess.run(["nmcli", "device", "disconnect", "wlan0"],
+                       check=False)                # ignore if already down
+        subprocess.run(
+            ["nmcli", "--wait", "15", "connection", "up", ssid],
             check=True
         )
-        subprocess.run(["nmcli", "connection", "up", ssid], check=True)
-        log_debug(f"Updated connection profile for '{ssid}' and brought it up")
+        log_debug(f"✓ Connected to “{ssid}” with new credentials")
 
     except subprocess.CalledProcessError as e:
-        log_debug(f"nmcli error: {e.stderr or e.stdout}")
+        err = e.stderr.strip() or e.stdout.strip()
+        log_debug(f"nmcli error ({e.returncode}): {err}")
+    except Exception as exc:
+        log_debug(f"Unhandled Wi‑Fi error: {exc}")
+
 
 def handle_orientation_change(data):
     """

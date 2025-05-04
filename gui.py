@@ -84,7 +84,6 @@ def update_status():
     finally:
         root.after(10000, update_status)       # schedule next run
 
-
 def handle_wifi_data(data: str):
     """
     Expect data in the form  "MySSID;PASS:supersecret"
@@ -181,16 +180,18 @@ def handle_orientation_change(data):
 def ble_callback(value, options):
     try:
         log_debug("Generic BLE write callback triggered!")
-        # Decode the incoming bytes into a string.
-        message = bytes(value).decode('utf-8')
+        message = bytes(value).decode('utf-8').strip()
         log_debug("Received BLE data: " + message)
-        # Determine the command type and dispatch accordingly.
         if message.startswith("WIFI:"):
             wifi_data = message[len("WIFI:"):].strip()
             handle_wifi_data(wifi_data)
         elif message.startswith("ORIENT:"):
             orientation_data = message[len("ORIENT:"):].strip()
             handle_orientation_change(orientation_data)
+        elif message == "REBOOT":
+            log_debug("Reboot command received; rebooting now.")
+            # requires root/sudo privileges
+            subprocess.run(["sudo", "reboot"], check=False)
         else:
             log_debug("Unknown BLE command received.")
     except Exception as e:

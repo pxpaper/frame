@@ -174,8 +174,13 @@ def handle_wifi_data(payload: str):
         log_debug(f"✓ Connected to “{ssid}” with new credentials")
 
     except subprocess.CalledProcessError as e:
-        err = e.stderr.strip() or e.stdout.strip()
-        log_debug(f"nmcli error ({e.returncode}): {err}")
+        # Either stderr or stdout (or both) can be None.
+        err_msg = ""
+        if e.stderr:
+            err_msg = e.stderr.strip()
+        elif e.stdout:
+            err_msg = e.stdout.strip()
+        log_debug(f"nmcli error ({e.returncode}): {err_msg or 'no output'}")
     except Exception as exc:
         log_debug(f"Unhandled Wi‑Fi error: {exc}")
 

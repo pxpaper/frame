@@ -1,59 +1,57 @@
 #!/usr/bin/env python3
-"""
-PixelPaper frame launcher + BLE provisioning ‑‑ GUI + GATT server
-===============================================================
-
-Changes in this version
------------------------
-• handle_wifi_data() is now *idempotent*:
-  – If wlan0 is already connected to the target SSID **and** the stored PSK
-    matches the one just received, it exits early, so NetworkManager never
-    asks for authentication and no LXPolkit pop‑up appears.
-  – Otherwise it deletes/creates the profile and brings it up as before.
-"""
-
 import tkinter as tk
 import socket
 import subprocess
 import time
 import threading
 import os
+import shlex
 from bluezero import adapter, peripheral
 
-# ─── BLE UUIDs ────────────────────────────────────────────
+# Global GUI variables and flags.
+launched = False
+debug_messages = []
+provisioning_char = None
+
+# UUIDs for custom provisioning service and characteristics.
 PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 PROVISIONING_CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
 SERIAL_CHAR_UUID          = "12345678-1234-5678-1234-56789abcdef2"
 
-# ─── globals ──────────────────────────────────────────────
-debug_messages = []
-chromium_cmd   = ["chromium", "--kiosk", "https://pixelpaper.com/frame.html"]
-chromium_proc  = None
+# Chromium command and process
+chromium_cmd = ["chromium", "--kiosk", "https://pixelpaper.com/frame.html"]
+chromium_process = None
 
-# ─── helpers ──────────────────────────────────────────────
 def get_serial_number():
     try:
         with open('/proc/device-tree/serial-number', 'r') as f:
-            return "PX" + f.read().strip('\x00\n ')
-    except Exception:
+            serial = f.read().strip('\x00\n ')
+        return "PX" + serial
+    except Exception as e:
         return "PXunknown"
 
-def log_debug(msg: str):
-    debug_messages.append(msg)
+def log_debug(message):
+    global debug_text
+    debug_messages.append(message)
+    # Limit log length to the last 10 messages.
     debug_text.config(state=tk.NORMAL)
     debug_text.delete(1.0, tk.END)
     debug_text.insert(tk.END, "\n".join(debug_messages[-10:]))
     debug_text.config(state=tk.DISABLED)
-    print(msg)
+    print(message)
 
 def disable_pairing():
     try:
-        subprocess.run(
-            ["bluetoothctl"], input="pairable no\nquit\n",
-            text=True, capture_output=True, check=True
+        result = subprocess.run(
+            ["bluetoothctl"],
+            input="pairable no\nquit\n",
+            text=True,
+            capture_output=True,
+            check=True
         )
+        #log_debug("Pairing disabled: " + result.stdout.strip())
     except Exception as e:
-        log_debug(f"Failed to disable pairing: {e}")
+        log_debug("Failed to disable pairing: " + str(e))
 
 def check_wifi_connection():
     try:
@@ -62,29 +60,47 @@ def check_wifi_connection():
     except OSError:
         return False
 
-# ─── Wi‑Fi provisioner (Option 1) ─────────────────────────
-def handle_wifi_data(payload: str):
-    """
-    BLE payload: 'MySSID;PASS:supersecret'
-    • If wlan0 is already connected to that SSID *and* the stored PSK
-      equals the new one, do nothing → no GUI prompt.
-    • Otherwise delete/create the profile and bring it up.
-    """
-    log_debug(f"Handling Wi‑Fi data: {payload}")
+def update_status():
+    global chromium_process
+    try:
+        up = check_wifi_connection()
+        log_debug("WiFi connected: " + str(up))
+        if up:
+            label.config(text="WiFi Connected. Launching frame…")
+            # if never started or crashed, restart
+            if chromium_process is None or chromium_process.poll() is not None:
+                log_debug("Starting Chromium.")
+                subprocess.run(["pkill", "-f", "chromium"], check=False)
+                chromium_process = subprocess.Popen(chromium_cmd)
+        else:
+            label.config(text="WiFi Not Connected. Waiting…")
+            # if running, kill
+            if chromium_process and chromium_process.poll() is None:
+                log_debug("WiFi lost: killing Chromium.")
+                subprocess.run(["pkill", "-f", "chromium"], check=False)
+                chromium_process = None
+    except Exception as e:
+        log_debug("Error in update_status: " + str(e))
+    finally:
+        root.after(5000, update_status)
 
-    # 1. parse
-    if ';PASS:' not in payload:
-        log_debug("✗ Invalid payload (need SSID;PASS:psk)")
-        return
-    ssid, password = payload.split(';PASS:', 1)
-    ssid, password = ssid.strip(), password.strip()
+def handle_wifi_data(data: str):
+    # -----------------------------------------
+    # 1. parse incoming payload
+    # -----------------------------------------
+    ssid, _, raw_pass = data.partition(";PASS:")
+    ssid      = ssid.strip()
+    password  = raw_pass.strip()
 
     if not ssid or not password:
-        log_debug("✗ Missing SSID or password")
+        log_debug("Bad WIFI payload (need SSID;PASS:psk)")
         return
 
+    # -----------------------------------------
+    # 2. is that network already up *with* the
+    #    same PSK? if so, bail early.
+    # -----------------------------------------
     try:
-        # 2. early exit if already on SSID with same PSK
         active = subprocess.check_output(
             ["nmcli", "-t", "-f", "NAME,DEVICE,ACTIVE", "connection", "show", "--active"],
             text=True
@@ -92,46 +108,52 @@ def handle_wifi_data(payload: str):
         for line in active.splitlines():
             name, dev, active_flag = line.split(":")
             if dev == "wlan0" and active_flag == "yes" and name == ssid:
-                current_psk = subprocess.check_output(
-                    ["nmcli", "--show-secrets", "-g",
-                     "802-11-wireless-security.psk", "connection", "show", ssid],
+                # grab the current PSK for that connection
+                props = subprocess.check_output(
+                    ["nmcli", "-s", "-g", "802-11-wireless-security.psk", "connection", "show", ssid],
                     text=True
                 ).strip()
-                if current_psk == password:
-                    log_debug(f"✓ Already on '{ssid}' with correct PSK – skipping update")
+                if props == password:
+                    log_debug(f"Wi‑Fi already connected to '{ssid}' with correct PSK → skip")
                     return
-                else:
-                    log_debug("PSK changed – will update profile")
-                break
+    except subprocess.CalledProcessError as e:
+        log_debug(f"nmcli active‑check failed: {e.stderr or e.stdout}")
 
-        # 3. (re)create profile
-        subprocess.run(["nmcli", "connection", "delete", ssid],
-                       check=False, capture_output=True, text=True)
+    # -----------------------------------------
+    # 3. *only now* rewrite the profile
+    # -----------------------------------------
+    try:
+        subprocess.run(["nmcli", "connection", "delete", ssid], check=False)
 
-        subprocess.run([
-            "nmcli", "connection", "add",
-            "type", "wifi",
-            "ifname", "wlan0",
-            "con-name", ssid,
-            "ssid", ssid,
-            "wifi-sec.key-mgmt", "wpa-psk",
-            "wifi-sec.psk", password,
-            "connection.autoconnect", "yes"
-        ], check=True)
-
-        # 4. bring it up
+        subprocess.run(
+            [
+                "nmcli", "connection", "add",
+                "type", "wifi",
+                "ifname", "wlan0",
+                "con-name", ssid,
+                "ssid", ssid,
+                "wifi-sec.key-mgmt", "wpa-psk",
+                "wifi-sec.psk",      password,
+                "connection.autoconnect", "yes"
+            ],
+            check=True
+        )
         subprocess.run(["nmcli", "connection", "up", ssid], check=True)
-        log_debug(f"✓ Connected to '{ssid}' (non‑interactive)")
+        log_debug(f"Updated connection profile for '{ssid}' and brought it up")
 
     except subprocess.CalledProcessError as e:
-        err = e.stderr.strip() or e.stdout.strip()
-        log_debug(f"nmcli error ({e.returncode}): {err}")
-    except Exception as e:
-        log_debug(f"Unhandled Wi‑Fi error: {e}")
+        log_debug(f"nmcli error: {e.stderr or e.stdout}")
 
-# ─── orientation helper (unchanged) ───────────────────────
-def handle_orientation_change(data: str):
-    output = "HDMI-A-1"
+def handle_orientation_change(data):
+    """
+    data: one of "normal", "90", "180", "270"
+    1. Calls wlr-randr|grep|awk to grab the current mode@freq
+    2. Writes out ~/.config/kanshi/config
+    3. Restarts kanshi with that config
+    """
+    output = "HDMI-A-1"  # adjust if your output name is different
+
+    # 1) grab current mode@freq
     try:
         mode = subprocess.check_output(
             "wlr-randr | grep '(current)' | awk '{print $1\"@\"$3}'",
@@ -141,86 +163,118 @@ def handle_orientation_change(data: str):
         log_debug(f"Failed to detect current mode: {e}")
         return
 
+    # 2) write kanshi config
     cfg = f"""profile {{
     output {output} enable mode {mode} position 0,0 transform {data}
-}}"""
+}}
+"""
     cfg_path = os.path.expanduser("~/.config/kanshi/config")
     os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
     with open(cfg_path, "w") as f:
         f.write(cfg)
     os.chmod(cfg_path, 0o600)
+    log_debug(f"Wrote kanshi config: mode={mode}, transform={data}")
 
+    # 3) restart kanshi so it picks up the new config
     subprocess.run(["killall", "kanshi"], check=False)
-    subprocess.Popen(["kanshi", "-c", cfg_path],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    log_debug(f"Rotated {output} → {data}°")
+    subprocess.Popen(
+        ["kanshi", "-c", cfg_path],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+    log_debug(f"Rotated {output} → {data}° via kanshi")
 
-# ─── BLE callback ─────────────────────────────────────────
 def ble_callback(value, options):
     try:
-        msg = bytes(value).decode()
-        if msg.startswith("WIFI:"):
-            handle_wifi_data(msg[len("WIFI:"):])
-        elif msg.startswith("ORIENT:"):
-            handle_orientation_change(msg[len("ORIENT:"):].strip())
+        log_debug("Generic BLE write callback triggered!")
+        # Decode the incoming bytes into a string.
+        message = bytes(value).decode('utf-8')
+        log_debug("Received BLE data: " + message)
+        # Determine the command type and dispatch accordingly.
+        if message.startswith("WIFI:"):
+            wifi_data = message[len("WIFI:"):].strip()
+            handle_wifi_data(wifi_data)
+        elif message.startswith("ORIENT:"):
+            orientation_data = message[len("ORIENT:"):].strip()
+            handle_orientation_change(orientation_data)
+        else:
+            log_debug("Unknown BLE command received.")
     except Exception as e:
-        log_debug(f"BLE callback error: {e}")
+        log_debug("Error in generic_ble_callback: " + str(e))
+    return
 
-# ─── GATT server thread ───────────────────────────────────
 def start_gatt_server():
+    global provisioning_char
     while True:
         try:
-            dongle = next(iter(adapter.Adapter.available()))
-            periph = peripheral.Peripheral(dongle.address, local_name="PixelPaper")
-
-            periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
-            periph.add_characteristic(
-                1, 1, PROVISIONING_CHAR_UUID, [], False,
-                ['write', 'write-without-response'],
-                write_callback=ble_callback
+            dongles = adapter.Adapter.available()
+            if not dongles:
+                log_debug("No Bluetooth adapters available for GATT server!")
+                time.sleep(5)
+                continue
+            dongle_addr = list(dongles)[0].address
+            log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
+            
+            ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
+            ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
+            provisioning_char = ble_periph.add_characteristic(
+                srv_id=1,
+                chr_id=1,
+                uuid=PROVISIONING_CHAR_UUID,
+                value=[],  # Start with an empty value.
+                notifying=False,
+                flags=['write', 'write-without-response'],
+                write_callback=ble_callback,
+                read_callback=None,
+                notify_callback=None
             )
-            periph.add_characteristic(
-                1, 2, SERIAL_CHAR_UUID,
-                list(get_serial_number().encode()), False, ['read']
+            # Add a read-only serial characteristic containing the serial number.
+            ble_periph.add_characteristic(
+                srv_id=1,
+                chr_id=2,
+                uuid=SERIAL_CHAR_UUID,
+                value=list(get_serial_number().encode()),
+                notifying=False,
+                flags=['read'],
+                read_callback=lambda options: list(get_serial_number().encode()),
+                write_callback=None,
+                notify_callback=None
             )
-            periph.publish()
+            log_debug("Publishing GATT server for provisioning and serial...")
+            ble_periph.publish()
+            log_debug("GATT server event loop ended (likely due to disconnection).")
         except Exception as e:
-            log_debug(f"GATT error: {e}")
+            log_debug("Exception in start_gatt_server: " + str(e))
+        log_debug("Restarting GATT server in 5 seconds...")
         time.sleep(5)
 
-# ─── GUI + Chromium monitor ───────────────────────────────
-def update_status():
-    global chromium_proc
-    try:
-        up = check_wifi_connection()
-        label.config(text="Wi‑Fi Connected" if up else "Waiting for Wi‑Fi")
-        if up:
-            if chromium_proc is None or chromium_proc.poll() is not None:
-                subprocess.run(["pkill", "-f", "chromium"], check=False)
-                chromium_proc = subprocess.Popen(chromium_cmd)
-        else:
-            if chromium_proc and chromium_proc.poll() is None:
-                subprocess.run(["pkill", "-f", "chromium"], check=False)
-                chromium_proc = None
-    except Exception as e:
-        log_debug(f"update_status error: {e}")
-    finally:
-        root.after(5000, update_status)
+def start_gatt_server_thread():
+    """Starts the GATT server in a background daemon thread."""
+    t = threading.Thread(target=start_gatt_server, daemon=True)
+    t.start()
 
-# ─── main ─────────────────────────────────────────────────
+# --- Main GUI ---
+
 if __name__ == '__main__':
     root = tk.Tk()
     root.title("Frame Status")
     root.attributes('-fullscreen', False)
 
-    label = tk.Label(root, text="Checking Wi‑Fi...", font=("Helvetica", 48))
+    # Main status label.
+    label = tk.Label(root, text="Checking WiFi...", font=("Helvetica", 48))
     label.pack(expand=True)
 
+    # Text widget for visual debugging.
     debug_text = tk.Text(root, height=10, bg="#f0f0f0")
     debug_text.pack(fill=tk.X, side=tk.BOTTOM)
     debug_text.config(state=tk.DISABLED)
 
+    # Disable pairing on startup.
     disable_pairing()
-    threading.Thread(target=start_gatt_server, daemon=True).start()
+
+    # Always start the BLE GATT server.
+    start_gatt_server_thread()
+
+    # Begin checking WiFi connection and updating the UI.
     update_status()
+
     root.mainloop()

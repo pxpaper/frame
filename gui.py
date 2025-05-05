@@ -179,24 +179,32 @@ def handle_orientation_change(data):
 
 def ble_callback(value, options):
     try:
-        log_debug("Generic BLE write callback triggered!")
-        message = bytes(value).decode('utf-8').strip()
+        if value is None:                # ← ignore empty callback
+            return
+
+        # value can be a list of ints (BLE bytes) or a bytes object
+        if isinstance(value, list):
+            value_bytes = bytes(value)
+        elif isinstance(value, (bytes, bytearray)):
+            value_bytes = value
+        else:
+            log_debug(f"Unexpected BLE value type: {type(value)}")
+            return
+
+        message = value_bytes.decode("utf-8", errors="ignore").strip()
         log_debug("Received BLE data: " + message)
+
         if message.startswith("WIFI:"):
-            wifi_data = message[len("WIFI:"):].strip()
-            handle_wifi_data(wifi_data)
+            handle_wifi_data(message[len("WIFI:"):].strip())
         elif message.startswith("ORIENT:"):
-            orientation_data = message[len("ORIENT:"):].strip()
-            handle_orientation_change(orientation_data)
+            handle_orientation_change(message[len("ORIENT:"):].strip())
         elif message == "REBOOT":
             log_debug("Reboot command received; rebooting now.")
-            # requires root/sudo privileges
             subprocess.run(["sudo", "reboot"], check=False)
         else:
             log_debug("Unknown BLE command received.")
     except Exception as e:
-        log_debug("Error in generic_ble_callback: " + str(e))
-    return
+        log_debug("Error in ble_callback: " + str(e))
 
 def start_gatt_server():
     global provisioning_char

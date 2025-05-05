@@ -55,12 +55,16 @@ def disable_pairing():
     except Exception as e:
         log_debug("Failed to disable pairing: " + str(e))
 
-def check_wifi_connection():
-    try:
-        socket.create_connection(("8.8.8.8", 53), timeout=2)
-        return True
-    except OSError:
-        return False
+def check_wifi_connection(retries: int = 2) -> bool:
+    for _ in range(retries):
+        try:
+            s = socket.create_connection(("8.8.8.8", 53), timeout=3)
+            s.close()
+            return True
+        except OSError:
+            time.sleep(0.3)
+    return False
+
 
 def update_status():
     global chromium_process, fail_count

@@ -65,6 +65,18 @@ def check_wifi_connection(retries: int = 2) -> bool:
             time.sleep(0.3)
     return False
 
+def nm_reconnect():
+    # try to bring the *active* wifi profile up again
+    try:
+        # detect the Wi‑Fi connection name that is set to autoconnect
+        ssid = subprocess.check_output(
+            ["nmcli", "-t", "-f", "NAME,TYPE,DEVICE,ACTIVE", "connection", "show", "--active"],
+            text=True
+        ).split(':')[0]  # first column NAME of the first active line
+        subprocess.run(["nmcli", "connection", "up", ssid], check=False)
+        log_debug(f"nmcli reconnect issued for {ssid}")
+    except Exception as e:
+        log_debug(f"nm_reconnect err: {e}")
 
 def update_status():
     global chromium_process, fail_count
@@ -77,9 +89,12 @@ def update_status():
                 subprocess.run(["pkill", "-f", "chromium"], check=False)
                 chromium_process = subprocess.Popen(chromium_cmd)
         else:
-            fail_count += 1                   # count the miss
-            if fail_count >= FAIL_MAX:        # only act on N misses
-                label.config(text="Wi‑Fi lost (retrying)")
+            fail_count += 1
+            if fail_count == FAIL_MAX:
+                label.config(text="Wi‑Fi lost → reconnecting…")
+                nm_reconnect()                    # give NM a kick
+            if fail_count >= FAIL_MAX * 2:        # still no luck after a while
+                label.config(text="Wi‑Fi lost → closing frame")
                 if chromium_process and chromium_process.poll() is None:
                     subprocess.run(["pkill", "-f", "chromium"], check=False)
                     chromium_process = None

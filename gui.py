@@ -21,7 +21,7 @@ FAIL_MAX   = 3          # how many misses before we declare “offline”
 fail_count = 0
 
 # Chromium command and process
-chromium_cmd = ["chromium", "--kiosk", "https://pixelpaper.com/frame.html"]
+chromium_cmd = ["chromium", "--kiosk", "https://pixelpaper.com/frame.html?id=frame1"]
 chromium_process = None
 
 def get_serial_number():

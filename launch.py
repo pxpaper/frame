@@ -1,40 +1,79 @@
 #!/usr/bin/env python3
+"""
+Boot helper for PixelPaper
+
+• Waits (up to 90 s) for real connectivity instead of a blind sleep
+• Updates the repo only when online
+• Always launches gui.py so BLE provisioning works even offline
+"""
 import subprocess
 import time
 import os
+import sys
+from pathlib import Path
 
-# Get the directory where launch.py resides.
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# ---------------------------------------------------------------------------
+# paths
+# ---------------------------------------------------------------------------
+SCRIPT_DIR   = Path(__file__).resolve().parent
+VENV_PYTHON  = SCRIPT_DIR / "venv" / "bin" / "python3"
+GUI_SCRIPT   = SCRIPT_DIR / "gui.py"
 
-# Build the path to the virtual environment's python3 interpreter.
-VENV_PYTHON = os.path.join(SCRIPT_DIR, "venv", "bin", "python3")
-
-# Build the path to gui.py (assumed to be in the same directory as launch.py).
-GUI_SCRIPT = os.path.join(SCRIPT_DIR, "gui.py")
-
-def update_repo():
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+def wait_for_network(max_secs: int = 90) -> bool:
+    """
+    Block until NetworkManager reports full connectivity or until
+    *max_secs* have elapsed. Returns True if online, False otherwise.
+    """
     try:
-        # Fetch all changes from remote
         subprocess.run(
-            ["git", "fetch", "--all"],
-            cwd=SCRIPT_DIR,
-            capture_output=True,
-            text=True
+            ["nm-online", "--wait-for-startup", "--timeout", str(max_secs)],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
-        # Force reset to match remote main branch
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+
+def update_repo() -> None:
+    """
+    Hard‑reset the local git repo to match origin/main.
+    Captures stdout/stderr for later troubleshooting.
+    """
+    try:
+        # fetch first (will also create origin if missing)
+        subprocess.run(
+            ["git", "fetch", "--all", "--prune"],
+            cwd=SCRIPT_DIR,
+            check=True,
+            text=True,
+        )
+        # hard reset
         result = subprocess.run(
             ["git", "reset", "--hard", "origin/main"],
             cwd=SCRIPT_DIR,
+            check=True,
             capture_output=True,
-            text=True
+            text=True,
         )
-        print("STDOUT:\n", result.stdout)
-        print("STDERR:\n", result.stderr)
-    except Exception as e:
-        print(f"Error updating repository: {e}")
+        print("git reset output:\n", result.stdout, result.stderr)
+    except Exception as exc:
+        print(f"[launch.py] git update failed: {exc}")
 
-if __name__ == '__main__':
-    time.sleep(10)  # Wait for the WiFi to be ready
-    update_repo()
-    # Launch the GUI application using the venv's python3 interpreter and the absolute path to gui.py.
-    subprocess.Popen([VENV_PYTHON, GUI_SCRIPT])
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    online = wait_for_network()
+    if online:
+        update_repo()
+    else:
+        print("[launch.py] No network after timeout – skipping repo update")
+
+    # always start the GUI (BLE provisioning works even without Internet)
+    subprocess.Popen([str(VENV_PYTHON), str(GUI_SCRIPT)])

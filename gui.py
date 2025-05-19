@@ -25,7 +25,6 @@ FAIL_MAX   = 3          # how many misses before we declare “offline”
 fail_count = 0
 
 # Chromium command and process
-chromium_cmd = ["chromium", "--kiosk", "https://pixelpaper.com/frame.html?id=frame1"]
 chromium_process = None
 
 def get_serial_number():
@@ -84,10 +83,9 @@ def update_status():
     try:
         up = check_wifi_connection()
         if up:
-            if fail_count:                  # was offline → now online
+            # was offline → now online
+            if fail_count:
                 fail_count = 0
-
-                # One‑time repo update in background
                 if not repo_updated:
                     threading.Thread(
                         target=launch.update_repo,
@@ -95,24 +93,20 @@ def update_status():
                     ).start()
                     repo_updated = True
 
+            # (re)start Chromium if it’s not running
             if chromium_process is None or chromium_process.poll() is not None:
-                label.config(text="Wi‑Fi OK → starting frame")
+                label.config(text="Wi-Fi OK → starting frame")
                 subprocess.run(["pkill", "-f", "chromium"], check=False)
-                chromium_process = subprocess.Popen(chromium_cmd)
+                url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
+                chromium_process = subprocess.Popen(
+                    ["chromium", "--kiosk", url]
+                )
+
         else:
-            fail_count += 1
-            if fail_count == FAIL_MAX:
-                label.config(text="Wi‑Fi lost → reconnecting…")
-                nm_reconnect()
-            if fail_count >= FAIL_MAX * 2:
-                label.config(text="Wi‑Fi lost → closing frame")
-                if chromium_process and chromium_process.poll() is None:
-                    subprocess.run(["pkill", "-f", "chromium"], check=False)
-                    chromium_process = None
+            log_debug("Wi-Fi down, waiting to retry")
+
     except Exception as e:
-        log_debug(f"update_status err: {e}")
-    finally:
-        root.after(10000, update_status)
+        log_debug(f"update_status error: {e}")
 
 def handle_wifi_data(data: str):
     """

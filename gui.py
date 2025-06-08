@@ -97,8 +97,8 @@ def update_status():
             if chromium_process is None or chromium_process.poll() is not None:
                 label.config(text="Wi-Fi OK → starting frame")
                 subprocess.run(["pkill", "-f", "chromium"], check=False)
-                url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
-                # url = f"https://pixelpaper.com/daily_prophet.html"
+                # url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
+                url = f"https://pixelpaper.com/daily_prophet.html"
                 # url =f"https://pixelpaper.com/test.html"
                 chromium_process = subprocess.Popen(
                     ["chromium", "--kiosk", url]

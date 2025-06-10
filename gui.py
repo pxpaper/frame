@@ -1,30 +1,31 @@
 #!/usr/bin/env python3
 import tkinter as tk
-import socket, subprocess, time, threading, os, math
+import socket
+import subprocess
+import time
+import threading
+import os
 from bluezero import adapter, peripheral
 
-# ── import launch helpers (update_repo etc.) ─────────────────────────────
+# Import update_repo so we can refresh once Wi‑Fi is up
 import launch
 
-# ── state flags kept from old script ─────────────────────────────────────
+# Global GUI variables and flags.
 launched = False
-repo_updated = False
-fail_count  = 0
-FAIL_MAX    = 3
-chromium_process = None
+debug_messages = []
 provisioning_char = None
+repo_updated = False          # ← new: run update only once
 
-# ── BLE UUIDs (unchanged) ────────────────────────────────────────────────
+# UUIDs for custom provisioning service and characteristics.
 PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 PROVISIONING_CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
 SERIAL_CHAR_UUID          = "12345678-1234-5678-1234-56789abcdef2"
 
-## ── logging bridge so old log_debug() keeps working ──────────────────────
-log_mgr: 'LogManager' = None
-def log_debug(message):
-    print(message)     # still mirror to stdout
-    if log_mgr:
-        log_mgr.show(message)
+FAIL_MAX   = 3          # how many misses before we declare “offline”
+fail_count = 0
+
+# Chromium command and process
+chromium_process = None
 
 def get_serial_number():
     try:
@@ -33,6 +34,16 @@ def get_serial_number():
         return "PX" + serial
     except Exception:
         return "PXunknown"
+
+def log_debug(message):
+    global debug_text
+    debug_messages.append(message)
+    # Limit log length to the last 10 messages.
+    debug_text.config(state=tk.NORMAL)
+    debug_text.delete(1.0, tk.END)
+    debug_text.insert(tk.END, "\n".join(debug_messages[-10:]))
+    debug_text.config(state=tk.DISABLED)
+    print(message)
 
 def disable_pairing():
     try:
@@ -67,32 +78,37 @@ def nm_reconnect():
     except Exception as e:
         log_debug(f"nm_reconnect err: {e}")
 
-## ── Wi-Fi / Chromium monitor (uses UIManager now) ───────────────────────
-def update_status(ui):
+def update_status():
     global chromium_process, fail_count, repo_updated
     try:
         up = check_wifi_connection()
         if up:
-            fail_count = 0
-            if not repo_updated:
-                threading.Thread(target=launch.update_repo, daemon=True).start()
-                repo_updated = True
+            # was offline → now online
+            if fail_count:
+                fail_count = 0
+                if not repo_updated:
+                    threading.Thread(
+                        target=launch.update_repo,
+                        daemon=True
+                    ).start()
+                    repo_updated = True
 
-            ui.set_status("Wi-Fi OK – launching frame", ok=True)
+            # (re)start Chromium if it’s not running
             if chromium_process is None or chromium_process.poll() is not None:
+                label.config(text="Wi-Fi OK → starting frame")
                 subprocess.run(["pkill", "-f", "chromium"], check=False)
                 url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
-                chromium_process = subprocess.Popen(["chromium", "--kiosk", url])
+                # url = f"https://pixelpaper.com/daily_prophet.html"
+                # url =f"https://pixelpaper.com/test.html"
+                chromium_process = subprocess.Popen(
+                    ["chromium", "--kiosk", url]
+                )
+
         else:
-            fail_count += 1
-            ui.set_status("Waiting for Wi-Fi…", ok=False)
-            if fail_count >= FAIL_MAX:
-                log_debug("Wi-Fi down – reconnecting NM")
-                nm_reconnect()
-                fail_count = 0
+            log_debug("Wi-Fi down, waiting to retry")
+
     except Exception as e:
         log_debug(f"update_status error: {e}")
-    ui.root.after(4000, lambda: update_status(ui))
 
 def handle_wifi_data(data: str):
     """
@@ -266,46 +282,22 @@ def start_gatt_server_thread():
     t = threading.Thread(target=start_gatt_server, daemon=True)
     t.start()
 
-## ── UI helpers ───────────────────────────────────────────────────────────
-class LogManager:
-    def __init__(self, root):
-        self.root = root
-        self.text = tk.Text(root, height=10, bg="#f0f0f0")
-        self.text.pack(fill=tk.X, side=tk.BOTTOM)
-        self.text.config(state=tk.DISABLED)
+# --- Main GUI ---
 
-    def show(self, message):
-        # Limit log length to the last 10 messages.
-        self.text.config(state=tk.NORMAL)
-        self.text.delete(1.0, tk.END)
-        self.text.insert(tk.END, message + "\n")
-        self.text.config(state=tk.DISABLED)
-        # Auto-scroll to the bottom
-        self.text.see(tk.END)
-
-class UIManager:
-    def __init__(self, root, log_manager):
-        self.root = root
-        self.log_manager = log_manager
-
-        # Status label
-        self.status_label = tk.Label(root, text="Checking WiFi...", font=("Helvetica", 48))
-        self.status_label.pack(expand=True)
-
-    def set_status(self, text, ok=True):
-        self.status_label.config(text=text, fg="green" if ok else "red")
-
-## ── main entry ───────────────────────────────────────────────────────────
 if __name__ == '__main__':
     root = tk.Tk()
-    root.configure(bg=COLORS["bg"])
-    root.attributes('-fullscreen', True)
+    root.title("Frame Status")
+    root.attributes('-fullscreen', False)
 
-    log_mgr = LogManager(root)
-    ui      = UIManager(root, log_mgr)
+    label = tk.Label(root, text="Checking WiFi...", font=("Helvetica", 48))
+    label.pack(expand=True)
+
+    debug_text = tk.Text(root, height=10, bg="#f0f0f0")
+    debug_text.pack(fill=tk.X, side=tk.BOTTOM)
+    debug_text.config(state=tk.DISABLED)
 
     disable_pairing()
     start_gatt_server_thread()
-    update_status(ui)
+    update_status()
 
     root.mainloop()

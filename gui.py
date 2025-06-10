@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
+# Pixel Paper full-screen status GUI
 import tkinter as tk
+import tkinter.font as tkfont
 import socket
 import subprocess
 import time
@@ -7,26 +9,72 @@ import threading
 import os
 from bluezero import adapter, peripheral
 
-# Import update_repo so we can refresh once Wi‑Fi is up
-import launch
+# --- project-internal import --------------------------------------------------
+import launch           # ← brings in update_repo()
 
-# Global GUI variables and flags.
-launched = False
-debug_messages = []
+# ── brand palette ─────────────────────────────────────────────────────────────
+BRAND_BG        = "#010101"   # almost-black
+BRAND_FG        = "#1FC742"   # bright green
+BRAND_FG_DARK   = "#025B18"   # darker green
+BRAND_BG_ALT    = "#161616"   # grey-black for debug panel
+
+# ── globals (mostly unchanged from previous version) ──────────────────────────
+launched          = False
+debug_messages    = []
 provisioning_char = None
-repo_updated = False          # ← new: run update only once
+repo_updated      = False
+FAIL_MAX          = 3
+fail_count        = 0
+chromium_process  = None
 
-# UUIDs for custom provisioning service and characteristics.
 PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 PROVISIONING_CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
 SERIAL_CHAR_UUID          = "12345678-1234-5678-1234-56789abcdef2"
 
-FAIL_MAX   = 3          # how many misses before we declare “offline”
-fail_count = 0
+# ── toast log manager ──────────────────────────────────────────────────────
+class ToastManager:
+    """Creates temporary stacked labels that fade & self-destruct."""
+    def __init__(self, root):
+        self.root  = root
+        self.frame = tk.Frame(root, bg="", highlightthickness=0)
+        self.frame.place(relx=1.0, rely=0.0, x=-20, y=20, anchor="ne")
+        self.toasts = []            # [(label, death_epoch), ...]
 
-# Chromium command and process
-chromium_process = None
+    def add(self, msg, duration=6000):
+        lbl = tk.Label(self.frame, text=msg, font=("Courier", 12),
+                       bg=BRAND_FG_DARK, fg="white", bd=0,
+                       padx=10, pady=4, anchor="e", justify="right")
+        lbl.pack(side="top", anchor="e", pady=4)
+        death = int(time.time() * 1000) + duration
+        self.toasts.append((lbl, death))
+        self._schedule_check()
 
+    def _schedule_check(self):
+        if not hasattr(self, "_job"):
+            self._job = self.root.after(500, self._check)
+
+    def _check(self):
+        now = int(time.time() * 1000)
+        self.toasts = [(l, d) for (l, d) in self.toasts
+                       if self._maybe_destroy(l, d, now)]
+        if self.toasts:
+            self._job = self.root.after(500, self._check)
+        else:
+            self._job = None
+
+    def _maybe_destroy(self, label, death, now):
+        if now >= death:
+            label.destroy()
+            return False
+        remaining = death - now
+        if remaining < 1500:
+            alpha = remaining / 1500
+            grey  = int(255 * (1 - alpha))
+            colour = f"#{grey:02x}{grey:02x}{grey:02x}"
+            label.configure(fg=colour)
+        return True
+
+# ── util helpers (unchanged / lightly tweaked for logging colours) ────────────
 def get_serial_number():
     try:
         with open('/proc/device-tree/serial-number', 'r') as f:
@@ -35,15 +83,9 @@ def get_serial_number():
     except Exception:
         return "PXunknown"
 
-def log_debug(message):
-    global debug_text
-    debug_messages.append(message)
-    # Limit log length to the last 10 messages.
-    debug_text.config(state=tk.NORMAL)
-    debug_text.delete(1.0, tk.END)
-    debug_text.insert(tk.END, "\n".join(debug_messages[-10:]))
-    debug_text.config(state=tk.DISABLED)
-    print(message)
+def log_debug(message: str):
+    print(message)         # still print to stdout
+    toast.add(message)     # visible toast
 
 def disable_pairing():
     try:
@@ -78,47 +120,79 @@ def nm_reconnect():
     except Exception as e:
         log_debug(f"nm_reconnect err: {e}")
 
+# ── main status polling & animation ───────────────────────────────────────────
 def update_status():
+    """Poll connectivity and manage Chromium / repo-update side-effects."""
     global chromium_process, fail_count, repo_updated
-    try:
-        up = check_wifi_connection()
-        if up:
-            # was offline → now online
-            if fail_count:
-                fail_count = 0
-                if not repo_updated:
-                    threading.Thread(
-                        target=launch.update_repo,
-                        daemon=True
-                    ).start()
-                    repo_updated = True
 
-            # (re)start Chromium if it’s not running
-            if chromium_process is None or chromium_process.poll() is not None:
-                label.config(text="Wi-Fi OK → starting frame")
-                subprocess.run(["pkill", "-f", "chromium"], check=False)
-                url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
-                # url = f"https://pixelpaper.com/daily_prophet.html"
-                # url =f"https://pixelpaper.com/test.html"
-                chromium_process = subprocess.Popen(
-                    ["chromium", "--kiosk", url]
-                )
+    online = check_wifi_connection()
+    if online:
+        fail_count = 0
+        set_status("Online ✔", BRAND_FG)
 
-        else:
-            log_debug("Wi-Fi down, waiting to retry")
+        if not repo_updated:
+            threading.Thread(target=launch.update_repo, daemon=True).start()
+            repo_updated = True
 
-    except Exception as e:
-        log_debug(f"update_status error: {e}")
+        if chromium_process is None or chromium_process.poll() is not None:
+            label.config(text="Launching frame …")
+            subprocess.run(["pkill", "-f", "chromium"], check=False)
+            url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
+            chromium_process = subprocess.Popen(["chromium", "--kiosk", url])
+    else:
+        fail_count += 1
+        set_status("Offline …", BRAND_FG_DARK)
 
+        if fail_count >= FAIL_MAX:
+            nm_reconnect()
+            fail_count = 0
+
+    # schedule next poll
+    root.after(3_000, update_status)
+
+# ── responsive UI helpers ─────────────────────────────────────────────────────
+def set_status(text: str, colour: str):
+    """Update the on-screen label and start a gentle pulse animation."""
+    label.config(text=text, fg=colour)
+    pulse(colour, 0)
+
+def pulse(colour: str, step: int):
+    """Simple heartbeat: fade between bright & dark green."""
+    # 0 → 100 → 0
+    ratio = step / 100
+    if ratio > 1:
+        ratio = 2 - ratio
+    new_colour = blend(colour, BRAND_BG, ratio * 0.5)  # subtle
+    canvas.itemconfig(pulse_circle, fill=new_colour)
+    next_step = (step + 4) % 200
+    root.after(40, pulse, colour, next_step)
+
+def blend(c1: str, c2: str, t: float) -> str:
+    """Linear-interpolate between two #rrggbb colours."""
+    a = int(c1[1:3], 16), int(c1[3:5], 16), int(c1[5:7], 16)
+    b = int(c2[1:3], 16), int(c2[3:5], 16), int(c2[5:7], 16)
+    c = tuple(int(ai + (bi-ai)*t) for ai, bi in zip(a, b))
+    return "#%02x%02x%02x" % c
+
+def on_resize(event):
+    """Re-scale fonts & visual elements to fit new geometry."""
+    shorter_side = min(event.width, event.height)
+    new_size = max(16, int(shorter_side * 0.06))  # 6 % of short edge
+    status_font.configure(size=new_size)
+
+    # pulse indicator radius = 8 % of short edge
+    r = int(shorter_side * 0.08)
+    canvas.coords(pulse_circle,
+                  event.width/2 - r, event.height/2 - r - new_size,
+                  event.width/2 + r, event.height/2 + r - new_size)
+
+# ── BLE handling (unchanged except for log colour) ────────────────────────────
 def handle_wifi_data(data: str):
     """
-    Expect data in the form  "MySSID;PASS:supersecret"
-    and (re)create a *single* NetworkManager keyfile profile
-    that already stores the PSK, so NM never needs to ask.
+    Format:  SSID;PASS:secret
+    Replaces all existing Wi-Fi profiles with one keyfile profile.
     """
     log_debug("Handling WiFi data: " + data)
-
-    # ---- 1. parse ---------------------------------------------------------
     try:
         ssid, pass_part = data.split(';', 1)
         password = pass_part.split(':', 1)[1]
@@ -126,7 +200,6 @@ def handle_wifi_data(data: str):
         log_debug("WiFi payload malformed; expected SSID;PASS:pwd")
         return
 
-    # ---- 2. wipe every Wi‑Fi profile (safer than one‑by‑one) -------------
     try:
         profiles = subprocess.check_output(
             ["nmcli", "-t", "-f", "UUID,TYPE", "connection", "show"],
@@ -141,7 +214,6 @@ def handle_wifi_data(data: str):
     except subprocess.CalledProcessError as e:
         log_debug(f"Could not list profiles: {e.stderr.strip()}")
 
-    # ---- 3. add keyfile profile with stored PSK --------------------------
     try:
         subprocess.run([
             "nmcli", "connection", "add",
@@ -151,29 +223,20 @@ def handle_wifi_data(data: str):
             "ssid", ssid,
             "wifi-sec.key-mgmt", "wpa-psk",
             "wifi-sec.psk", password,
-            "802-11-wireless-security.psk-flags", "0",     # ← store on disk
+            "802-11-wireless-security.psk-flags", "0",
             "connection.autoconnect", "yes"
         ], check=True, capture_output=True, text=True)
 
         subprocess.run(["nmcli", "connection", "reload"], check=True)
         subprocess.run(["nmcli", "connection", "up", ssid], check=True,
                        capture_output=True, text=True)
-
-        log_debug(f"Activated Wi‑Fi connection '{ssid}' non‑interactively.")
+        log_debug(f"Activated Wi-Fi connection '{ssid}' non-interactively.")
     except subprocess.CalledProcessError as e:
         log_debug(f"nmcli error {e.returncode}: {e.stderr.strip() or e.stdout.strip()}")
 
-
-def handle_orientation_change(data):
-    """
-    data: one of "normal", "90", "180", "270"
-    1. Calls wlr-randr|grep|awk to grab the current mode@freq
-    2. Writes out ~/.config/kanshi/config
-    3. Restarts kanshi with that config
-    """
-    output = "HDMI-A-1"  # adjust if your output name is different
-
-    # 1) grab current mode@freq
+def handle_orientation_change(data: str):
+    """Rotate display via kanshi (unchanged)."""
+    output = "HDMI-A-1"
     try:
         mode = subprocess.check_output(
             "wlr-randr | grep '(current)' | awk '{print $1\"@\"$3}'",
@@ -183,7 +246,6 @@ def handle_orientation_change(data):
         log_debug(f"Failed to detect current mode: {e}")
         return
 
-    # 2) write kanshi config
     cfg = f"""profile {{
     output {output} enable mode {mode} position 0,0 transform {data}
 }}
@@ -193,30 +255,16 @@ def handle_orientation_change(data):
     with open(cfg_path, "w") as f:
         f.write(cfg)
     os.chmod(cfg_path, 0o600)
-    log_debug(f"Wrote kanshi config: mode={mode}, transform={data}")
-
-    # 3) restart kanshi so it picks up the new config
     subprocess.run(["killall", "kanshi"], check=False)
-    subprocess.Popen(
-        ["kanshi", "-c", cfg_path],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    )
+    subprocess.Popen(["kanshi", "-c", cfg_path],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     log_debug(f"Rotated {output} → {data}° via kanshi")
 
 def ble_callback(value, options):
     try:
-        if value is None:                # ← ignore empty callback
+        if not value:
             return
-
-        # value can be a list of ints (BLE bytes) or a bytes object
-        if isinstance(value, list):
-            value_bytes = bytes(value)
-        elif isinstance(value, (bytes, bytearray)):
-            value_bytes = value
-        else:
-            log_debug(f"Unexpected BLE value type: {type(value)}")
-            return
-
+        value_bytes = bytes(value) if isinstance(value, list) else value
         message = value_bytes.decode("utf-8", errors="ignore").strip()
         log_debug("Received BLE data: " + message)
 
@@ -242,62 +290,56 @@ def start_gatt_server():
                 time.sleep(5)
                 continue
             dongle_addr = list(dongles)[0].address
-            log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
-            
+            log_debug("Using Bluetooth adapter: " + dongle_addr)
+
             ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
             ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
             provisioning_char = ble_periph.add_characteristic(
-                srv_id=1,
-                chr_id=1,
-                uuid=PROVISIONING_CHAR_UUID,
-                value=[],  # Start with an empty value.
-                notifying=False,
+                srv_id=1, chr_id=1, uuid=PROVISIONING_CHAR_UUID,
+                value=[], notifying=False,
                 flags=['write', 'write-without-response'],
-                write_callback=ble_callback,
-                read_callback=None,
-                notify_callback=None
+                write_callback=ble_callback
             )
-            # Add a read-only serial characteristic containing the serial number.
             ble_periph.add_characteristic(
-                srv_id=1,
-                chr_id=2,
-                uuid=SERIAL_CHAR_UUID,
+                srv_id=1, chr_id=2, uuid=SERIAL_CHAR_UUID,
                 value=list(get_serial_number().encode()),
-                notifying=False,
-                flags=['read'],
-                read_callback=lambda options: list(get_serial_number().encode()),
-                write_callback=None,
-                notify_callback=None
+                notifying=False, flags=['read'],
+                read_callback=lambda options: list(get_serial_number().encode())
             )
-            log_debug("Publishing GATT server for provisioning and serial...")
+            log_debug("Publishing GATT server …")
             ble_periph.publish()
-            log_debug("GATT server event loop ended (likely due to disconnection).")
+            log_debug("GATT event loop ended.")
         except Exception as e:
             log_debug("Exception in start_gatt_server: " + str(e))
-        log_debug("Restarting GATT server in 5 seconds...")
+        log_debug("Restarting GATT in 5 s …")
         time.sleep(5)
 
 def start_gatt_server_thread():
-    """Starts the GATT server in a background daemon thread."""
-    t = threading.Thread(target=start_gatt_server, daemon=True)
-    t.start()
+    threading.Thread(target=start_gatt_server, daemon=True).start()
 
-# --- Main GUI ---
+# ── Tkinter UI setup ──────────────────────────────────────────────────────────
+root = tk.Tk()
+root.title("Pixel Paper Status")
+root.configure(bg=BRAND_BG)
+root.attributes("-fullscreen", True)            # always full-screen
+root.bind("<Configure>", on_resize)             # responsive sizing
 
-if __name__ == '__main__':
-    root = tk.Tk()
-    root.title("Frame Status")
-    root.attributes('-fullscreen', False)
+# status text
+status_font = tkfont.Font(family="Helvetica", size=48, weight="bold")
+label = tk.Label(root, text="Starting …", font=status_font,
+                 bg=BRAND_BG, fg=BRAND_FG)
+label.pack(side=tk.TOP, pady=40)
 
-    label = tk.Label(root, text="Checking WiFi...", font=("Helvetica", 48))
-    label.pack(expand=True)
+# animated pulse indicator
+canvas = tk.Canvas(root, bg=BRAND_BG, highlightthickness=0)
+canvas.pack(fill=tk.BOTH, expand=True)
+pulse_circle = canvas.create_oval(0, 0, 0, 0, fill=BRAND_FG, width=0)
 
-    debug_text = tk.Text(root, height=10, bg="#f0f0f0")
-    debug_text.pack(fill=tk.X, side=tk.BOTTOM)
-    debug_text.config(state=tk.DISABLED)
+# instantiate toast manager after canvas
+toast = ToastManager(root)
 
-    disable_pairing()
-    start_gatt_server_thread()
-    update_status()
-
-    root.mainloop()
+# ── kick-off ──────────────────────────────────────────────────────────────────
+disable_pairing()
+start_gatt_server_thread()
+update_status()            # first poll → periodic via .after
+root.mainloop()

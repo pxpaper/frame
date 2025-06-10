@@ -12,7 +12,7 @@ GUI_SCRIPT   = os.path.join(SCRIPT_DIR, "gui.py")
 def wait_for_network(timeout=90) -> bool:
     """
     Block until NetworkManager reports a working Internet connection
-    or the timeout elapses.  Uses nm‑online if available.
+    or the timeout elapses.  Uses nm-online if available.
     """
     try:
         subprocess.run(
@@ -38,7 +38,7 @@ def update_repo():
             capture_output=True,
             text=True
         )
-        # 2. hard‑reset to origin/main
+        # 2. hard-reset to origin/main
         result = subprocess.run(
             ["git", "reset", "--hard", "origin/main"],
             cwd=SCRIPT_DIR,

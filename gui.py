@@ -287,7 +287,8 @@ def start_gatt_server_thread():
 if __name__ == '__main__':
     root = tk.Tk()
     root.title("Frame Status")
-    root.attributes('-fullscreen', False)
+    root.attributes('-fullscreen', True)
+    root.bind('<Escape>', lambda e: root.attributes('-fullscreen', False))
 
     label = tk.Label(root, text="Checking WiFi...", font=("Helvetica", 48))
     label.pack(expand=True)

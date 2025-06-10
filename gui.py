@@ -1,20 +1,7 @@
 #!/usr/bin/env python3
-"""
-Pixel Paper – full-screen GUI (portrait & landscape friendly)
-Keeps all previous functionality but adds a modern look and feel.
-"""
 import tkinter as tk
 import socket, subprocess, time, threading, os, math
 from bluezero import adapter, peripheral
-
-# ── brand palette ────────────────────────────────────────────────────────
-COLORS = {
-    "bg"       : "#010101",
-    "accent"   : "#1FC742",
-    "accent2"  : "#025B18",
-    "log_bg"   : "#161616",
-    "text"     : "#FFFFFF",
-}
 
 # ── import launch helpers (update_repo etc.) ─────────────────────────────
 import launch
@@ -32,7 +19,13 @@ PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 PROVISIONING_CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
 SERIAL_CHAR_UUID          = "12345678-1234-5678-1234-56789abcdef2"
 
-# ── helpers reused from old script ───────────────────────────────────────
+## ── logging bridge so old log_debug() keeps working ──────────────────────
+log_mgr: 'LogManager' = None
+def log_debug(message):
+    print(message)     # still mirror to stdout
+    if log_mgr:
+        log_mgr.show(message)
+
 def get_serial_number():
     try:
         with open('/proc/device-tree/serial-number', 'r') as f:
@@ -40,16 +33,6 @@ def get_serial_number():
         return "PX" + serial
     except Exception:
         return "PXunknown"
-
-def check_wifi_connection(retries: int = 2) -> bool:
-    for _ in range(retries):
-        try:
-            s = socket.create_connection(("8.8.8.8", 53), timeout=3)
-            s.close()
-            return True
-        except OSError:
-            time.sleep(0.3)
-    return False
 
 def disable_pairing():
     try:
@@ -61,125 +44,18 @@ def disable_pairing():
             check=True
         )
     except Exception as e:
-        log_debug(f"Failed to disable pairing: {e}")
+        log_debug("Failed to disable pairing: " + str(e))
 
-# ── UI helpers ───────────────────────────────────────────────────────────
-class LogManager:
-    """Toast-style logs that slide in at top-right and fade out."""
-    def __init__(self, root):
-        self.root = root
-        self.cards = []
+def check_wifi_connection(retries: int = 2) -> bool:
+    for _ in range(retries):
+        try:
+            s = socket.create_connection(("8.8.8.8", 53), timeout=3)
+            s.close()
+            return True
+        except OSError:
+            time.sleep(0.3)
+    return False
 
-    def show(self, text, ttl=4000):
-        card = tk.Label(self.root, text=text, fg=COLORS["text"], bg=COLORS["log_bg"],
-                        font=("Helvetica", 14), bd=0, padx=14, pady=6, anchor="w")
-        card.update_idletasks()
-
-        # place off-screen first, then slide-in
-        x = self.root.winfo_width() - card.winfo_reqwidth() - 12
-        y = 12 + sum(c.winfo_reqheight() + 8 for c in self.cards)
-        card.place(x=x + card.winfo_reqwidth() + 20, y=y)  # start just outside
-        self.cards.append(card)
-
-        # slide animation (10 frames)
-        for i in range(10):
-            self.root.after(i*20, lambda i=i, c=card, x=x: c.place(x=x + (10-i)*4))
-
-        # schedule fade-out & cleanup
-        self.root.after(ttl, lambda c=card: self._fade_and_remove(c))
-
-    def _fade_and_remove(self, card, step=0):
-        if step >= 10:
-            card.destroy()
-            self.cards.remove(card)
-            self._reflow()
-            return
-        # simple fade by adjusting bg alpha via rgb interpolation
-        ratio = 1 - step/10
-        r = int(0x16 * ratio)  # 0x16 from #161616
-        g = int(0x16 * ratio)
-        b = int(0x16 * ratio)
-        card.config(bg=f"#{r:02x}{g:02x}{b:02x}")
-        self.root.after(40, lambda: self._fade_and_remove(card, step+1))
-
-    def _reflow(self):
-        """Re-stack remaining cards upward."""
-        y = 12
-        for card in self.cards:
-            card.place(y=y)
-            y += card.winfo_reqheight() + 8
-
-class UIManager:
-    """Controls the main status label and animations."""
-    def __init__(self, root, log_mgr: LogManager):
-        self.root = root
-        self.log  = log_mgr
-        self.status = tk.Label(root,
-                               text="Checking Wi-Fi…",
-                               fg=COLORS["accent"],
-                               bg=COLORS["bg"],
-                               font=("Helvetica", 48, "bold"))
-        self.status.pack(expand=True)
-        self.pulse_phase = 0
-        root.bind('<Configure>', self._on_resize)
-        self._animate_pulse()
-
-    def set_status(self, text, ok=False):
-        self.status.config(text=text,
-                           fg=COLORS["accent"] if ok else COLORS["accent2"])
-
-    # ――― small pulse animation to indicate activity ―――
-    def _animate_pulse(self):
-        self.pulse_phase = (self.pulse_phase + 1) % 100
-        scale = 1 + 0.02*math.sin(self.pulse_phase/100*2*math.pi)
-        self.status.tk.call(self.status._w, "scale", 0, 0, scale, scale)
-        self.root.after(40, self._animate_pulse)
-
-    # ――― keep font size proportional to window height ―――
-    def _on_resize(self, event):
-        h = event.height
-        new_size = max(28, int(h * 0.10))
-        self.status.config(font=("Helvetica", new_size, "bold"))
-
-# ── logging bridge so old log_debug() keeps working ──────────────────────
-log_mgr: LogManager = None
-def log_debug(message):
-    print(message)  # still mirror to stdout
-    if log_mgr:
-        log_mgr.show(message)
-
-# ── Wi-Fi / Chromium monitor (unchanged behaviour) ───────────────────────
-def update_status(ui: UIManager):
-    global chromium_process, fail_count, repo_updated
-
-    try:
-        up = check_wifi_connection()
-        if up:
-            fail_count = 0
-            if not repo_updated:
-                threading.Thread(target=launch.update_repo, daemon=True).start()
-                repo_updated = True
-
-            ui.set_status("Wi-Fi OK – launching frame", ok=True)
-
-            if chromium_process is None or chromium_process.poll() is not None:
-                subprocess.run(["pkill", "-f", "chromium"], check=False)
-                url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
-                chromium_process = subprocess.Popen(["chromium", "--kiosk", url])
-        else:
-            fail_count += 1
-            ui.set_status("Waiting for Wi-Fi…" , ok=False)
-            if fail_count >= FAIL_MAX:
-                log_debug("Wi-Fi down – reconnecting NM")
-                nm_reconnect()
-                fail_count = 0
-    except Exception as e:
-        log_debug(f"update_status error: {e}")
-
-    # schedule next check
-    ui.root.after(4000, lambda: update_status(ui))
-
-# ── NetworkManager reconnect helper (same logic) ─────────────────────────
 def nm_reconnect():
     try:
         ssid = subprocess.check_output(
@@ -191,24 +67,235 @@ def nm_reconnect():
     except Exception as e:
         log_debug(f"nm_reconnect err: {e}")
 
-# ── BLE provisioning bits  (no functional change; only log style) ───────
+## ── Wi-Fi / Chromium monitor (uses UIManager now) ───────────────────────
+def update_status(ui):
+    global chromium_process, fail_count, repo_updated
+    try:
+        up = check_wifi_connection()
+        if up:
+            fail_count = 0
+            if not repo_updated:
+                threading.Thread(target=launch.update_repo, daemon=True).start()
+                repo_updated = True
+
+            ui.set_status("Wi-Fi OK – launching frame", ok=True)
+            if chromium_process is None or chromium_process.poll() is not None:
+                subprocess.run(["pkill", "-f", "chromium"], check=False)
+                url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
+                chromium_process = subprocess.Popen(["chromium", "--kiosk", url])
+        else:
+            fail_count += 1
+            ui.set_status("Waiting for Wi-Fi…", ok=False)
+            if fail_count >= FAIL_MAX:
+                log_debug("Wi-Fi down – reconnecting NM")
+                nm_reconnect()
+                fail_count = 0
+    except Exception as e:
+        log_debug(f"update_status error: {e}")
+    ui.root.after(4000, lambda: update_status(ui))
+
 def handle_wifi_data(data: str):
-    ···  #  ←  *identical body from your original script*  (omitted for brevity)
+    """
+    Expect data in the form  "MySSID;PASS:supersecret"
+    and (re)create a *single* NetworkManager keyfile profile
+    that already stores the PSK, so NM never needs to ask.
+    """
+    log_debug("Handling WiFi data: " + data)
+
+    # ---- 1. parse ---------------------------------------------------------
+    try:
+        ssid, pass_part = data.split(';', 1)
+        password = pass_part.split(':', 1)[1]
+    except ValueError:
+        log_debug("WiFi payload malformed; expected SSID;PASS:pwd")
+        return
+
+    # ---- 2. wipe every Wi‑Fi profile (safer than one‑by‑one) -------------
+    try:
+        profiles = subprocess.check_output(
+            ["nmcli", "-t", "-f", "UUID,TYPE", "connection", "show"],
+            text=True
+        ).splitlines()
+
+        for line in profiles:
+            uuid, ctype = line.split(':', 1)
+            if ctype == "802-11-wireless":
+                subprocess.run(["nmcli", "connection", "delete", uuid],
+                               check=False, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        log_debug(f"Could not list profiles: {e.stderr.strip()}")
+
+    # ---- 3. add keyfile profile with stored PSK --------------------------
+    try:
+        subprocess.run([
+            "nmcli", "connection", "add",
+            "type", "wifi",
+            "ifname", "wlan0",
+            "con-name", ssid,
+            "ssid", ssid,
+            "wifi-sec.key-mgmt", "wpa-psk",
+            "wifi-sec.psk", password,
+            "802-11-wireless-security.psk-flags", "0",     # ← store on disk
+            "connection.autoconnect", "yes"
+        ], check=True, capture_output=True, text=True)
+
+        subprocess.run(["nmcli", "connection", "reload"], check=True)
+        subprocess.run(["nmcli", "connection", "up", ssid], check=True,
+                       capture_output=True, text=True)
+
+        log_debug(f"Activated Wi‑Fi connection '{ssid}' non‑interactively.")
+    except subprocess.CalledProcessError as e:
+        log_debug(f"nmcli error {e.returncode}: {e.stderr.strip() or e.stdout.strip()}")
+
 
 def handle_orientation_change(data):
-    ···  #  ←  unchanged
+    """
+    data: one of "normal", "90", "180", "270"
+    1. Calls wlr-randr|grep|awk to grab the current mode@freq
+    2. Writes out ~/.config/kanshi/config
+    3. Restarts kanshi with that config
+    """
+    output = "HDMI-A-1"  # adjust if your output name is different
+
+    # 1) grab current mode@freq
+    try:
+        mode = subprocess.check_output(
+            "wlr-randr | grep '(current)' | awk '{print $1\"@\"$3}'",
+            shell=True, text=True
+        ).strip()
+    except subprocess.CalledProcessError as e:
+        log_debug(f"Failed to detect current mode: {e}")
+        return
+
+    # 2) write kanshi config
+    cfg = f"""profile {{
+    output {output} enable mode {mode} position 0,0 transform {data}
+}}
+"""
+    cfg_path = os.path.expanduser("~/.config/kanshi/config")
+    os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
+    with open(cfg_path, "w") as f:
+        f.write(cfg)
+    os.chmod(cfg_path, 0o600)
+    log_debug(f"Wrote kanshi config: mode={mode}, transform={data}")
+
+    # 3) restart kanshi so it picks up the new config
+    subprocess.run(["killall", "kanshi"], check=False)
+    subprocess.Popen(
+        ["kanshi", "-c", cfg_path],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+    log_debug(f"Rotated {output} → {data}° via kanshi")
 
 def ble_callback(value, options):
-    ···  #  ←  unchanged
+    try:
+        if value is None:                # ← ignore empty callback
+            return
+
+        # value can be a list of ints (BLE bytes) or a bytes object
+        if isinstance(value, list):
+            value_bytes = bytes(value)
+        elif isinstance(value, (bytes, bytearray)):
+            value_bytes = value
+        else:
+            log_debug(f"Unexpected BLE value type: {type(value)}")
+            return
+
+        message = value_bytes.decode("utf-8", errors="ignore").strip()
+        log_debug("Received BLE data: " + message)
+
+        if message.startswith("WIFI:"):
+            handle_wifi_data(message[len("WIFI:"):].strip())
+        elif message.startswith("ORIENT:"):
+            handle_orientation_change(message[len("ORIENT:"):].strip())
+        elif message == "REBOOT":
+            log_debug("Reboot command received; rebooting now.")
+            subprocess.run(["sudo", "reboot"], check=False)
+        else:
+            log_debug("Unknown BLE command received.")
+    except Exception as e:
+        log_debug("Error in ble_callback: " + str(e))
 
 def start_gatt_server():
-    ···  #  ←  unchanged
+    global provisioning_char
+    while True:
+        try:
+            dongles = adapter.Adapter.available()
+            if not dongles:
+                log_debug("No Bluetooth adapters available for GATT server!")
+                time.sleep(5)
+                continue
+            dongle_addr = list(dongles)[0].address
+            log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
+            
+            ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
+            ble_periph.add_service(srv_id=1, uuid=PROVISIONING_SERVICE_UUID, primary=True)
+            provisioning_char = ble_periph.add_characteristic(
+                srv_id=1,
+                chr_id=1,
+                uuid=PROVISIONING_CHAR_UUID,
+                value=[],  # Start with an empty value.
+                notifying=False,
+                flags=['write', 'write-without-response'],
+                write_callback=ble_callback,
+                read_callback=None,
+                notify_callback=None
+            )
+            # Add a read-only serial characteristic containing the serial number.
+            ble_periph.add_characteristic(
+                srv_id=1,
+                chr_id=2,
+                uuid=SERIAL_CHAR_UUID,
+                value=list(get_serial_number().encode()),
+                notifying=False,
+                flags=['read'],
+                read_callback=lambda options: list(get_serial_number().encode()),
+                write_callback=None,
+                notify_callback=None
+            )
+            log_debug("Publishing GATT server for provisioning and serial...")
+            ble_periph.publish()
+            log_debug("GATT server event loop ended (likely due to disconnection).")
+        except Exception as e:
+            log_debug("Exception in start_gatt_server: " + str(e))
+        log_debug("Restarting GATT server in 5 seconds...")
+        time.sleep(5)
 
 def start_gatt_server_thread():
+    """Starts the GATT server in a background daemon thread."""
     t = threading.Thread(target=start_gatt_server, daemon=True)
     t.start()
 
-# ── main entry ───────────────────────────────────────────────────────────
+## ── UI helpers ───────────────────────────────────────────────────────────
+class LogManager:
+    def __init__(self, root):
+        self.root = root
+        self.text = tk.Text(root, height=10, bg="#f0f0f0")
+        self.text.pack(fill=tk.X, side=tk.BOTTOM)
+        self.text.config(state=tk.DISABLED)
+
+    def show(self, message):
+        # Limit log length to the last 10 messages.
+        self.text.config(state=tk.NORMAL)
+        self.text.delete(1.0, tk.END)
+        self.text.insert(tk.END, message + "\n")
+        self.text.config(state=tk.DISABLED)
+        # Auto-scroll to the bottom
+        self.text.see(tk.END)
+
+class UIManager:
+    def __init__(self, root, log_manager):
+        self.root = root
+        self.log_manager = log_manager
+
+        # Status label
+        self.status_label = tk.Label(root, text="Checking WiFi...", font=("Helvetica", 48))
+        self.status_label.pack(expand=True)
+
+    def set_status(self, text, ok=True):
+        self.status_label.config(text=text, fg="green" if ok else "red")
+
+## ── main entry ───────────────────────────────────────────────────────────
 if __name__ == '__main__':
     root = tk.Tk()
     root.configure(bg=COLORS["bg"])

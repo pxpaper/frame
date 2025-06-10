@@ -32,60 +32,110 @@ CLR_TEXT    = "#E8E8E8"
 # ──────────────────────────────────────────────────────────────────────────
 #  Toast system – smooth, stacked, 50 FPS
 # ──────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────
+#  Toast system – one global 60 fps animation loop
+# ──────────────────────────────────────────────────────────────────────────
 class Toast:
-    MARGIN_X      = 20
-    MARGIN_Y      = 20
-    SPACING_Y     = 10
-    WIDTH         = 380
-    PAD           = 12
-    SLIDE_DUR     = 0.25    # seconds
-    VISIBLE_DUR   = 4.0     # seconds after slide in
-    FADE_DUR      = 0.4     # seconds
+    WIDTH       = 380
+    PAD         = 12
+    MARGIN_X    = 20
+    MARGIN_Y    = 20
+    SPACING_Y   = 10
+    SLIDE_PX    = 24          # px per frame for X-slide (~250 ms)
+    FADE_PCT    = 0.05        # α decrement per frame during fade
+    SHOW_FRAMES = 240         # ≈ 4 s at 60 fps
 
-    active: List["Toast"] = []
+    active : list["Toast"] = []      # keeps z-order
 
-    def __init__(self, master: tk.Tk, message: str):
-        self.master      = master
-        self.message     = message
-        self.frame       = tk.Frame(master, bg=CLR_ACCENT2, highlightthickness=0)
-        self.label       = tk.Label(self.frame,
-                                    text=message,
-                                    fg=CLR_TEXT,
-                                    bg=CLR_ACCENT2,
-                                    justify="left",
-                                    wraplength=self.WIDTH - 2*self.PAD)
-        self.label.pack(padx=self.PAD, pady=(self.PAD, self.PAD-2), anchor="w")
+    # -- one global animation clock --------------------------------------
+    _ticker_started = False
+    @classmethod
+    def _start_ticker(cls):
+        if cls._ticker_started: return
+        cls._ticker_started = True
+        def tick():
+            for t in cls.active[:]:
+                t._update()
+            root.after(16, tick)
+        tick()
+
+    # --------------------------------------------------------------------
+    def __init__(self, master: tk.Tk, text: str):
+        self.master   = master
+        self.state    = 'slide'   # 'slide' → 'show' → 'fade'
+        self.framectr = 0
+        self.alpha    = 1.0
+        # build widget
+        self.frame = tk.Frame(master, bg=CLR_ACCENT2, highlightthickness=0)
+        self.label = tk.Label(self.frame, text=text, fg=CLR_TEXT, bg=CLR_ACCENT2,
+                              justify="left", wraplength=self.WIDTH-2*self.PAD)
+        self.label.pack(padx=self.PAD, pady=(self.PAD,self.PAD-2), anchor='w')
+        # fetch natural height
         self.frame.update_idletasks()
-        self.height      = self.frame.winfo_height()
+        self.height = self.frame.winfo_height()
 
-        # compute start / final x
-        self.start_x     = self.WIDTH + self.MARGIN_X
-        self.final_x     = -self.MARGIN_X
-        # initial placement at top of current stack
-        self.current_x   = self.start_x
-        self.current_y   = self._compute_target_y(new=True)
-        self.frame.place(relx=1.0,
-                         x=self.current_x,
-                         y=self.current_y,
-                         anchor="ne")
+        # reserve spot **before** adding to list → no overlap ever
+        self.y = self._reserved_y()
+        self.x = self.WIDTH + self.MARGIN_X
+        self.frame.place(relx=1.0, x=self.x, y=self.y, anchor='ne')
 
-        self.start_time  = time.time()
         Toast.active.append(self)
-        # if this is the only toast, kick off the animation loop
-        if len(Toast.active) == 1:
-            self.master.after(0, animate_toasts)
+        Toast._start_ticker()
 
-    def _compute_target_y(self, new: bool=False) -> int:
-        """Y for top of this toast in a stack."""
-        y = Toast.MARGIN_Y
-        # if new, count all existing to compute below them
-        to_iter = Toast.active if new else Toast.active
-        for t in to_iter:
-            y += t.height + Toast.SPACING_Y
-        # if new, it's appended, so subtract its own height + spacing
-        if new:
-            y -= (self.height + Toast.SPACING_Y)
+    # --------------------------------------------------------------------
+    def _reserved_y(self) -> int:
+        y = self.MARGIN_Y
+        for t in Toast.active:
+            y += t.height + self.SPACING_Y
         return y
+
+    # --------------------------------------------------------------------
+    def _update(self):
+        # slide in
+        if self.state == 'slide':
+            self.x -= self.SLIDE_PX
+            if self.x <= -self.MARGIN_X:
+                self.x = -self.MARGIN_X
+                self.state = 'show'
+            self.frame.place_configure(x=self.x)
+
+        # show countdown
+        elif self.state == 'show':
+            if self.framectr >= self.SHOW_FRAMES:
+                self.state = 'fade'
+            else:
+                self.framectr += 1
+
+        # fade out
+        elif self.state == 'fade':
+            self.alpha -= self.FADE_PCT
+            if self.alpha <= 0:
+                self._destroy()
+                return
+            new_bg = _blend(CLR_ACCENT2, CLR_BG, 1-self.alpha)
+            new_fg = _blend(CLR_TEXT,   CLR_BG, 1-self.alpha)
+            self.frame.configure(bg=new_bg)
+            self.label.configure(bg=new_bg, fg=new_fg)
+
+        # keep vertical stack tidy (gentle spring)
+        target_y = self._reserved_y_position()
+        if abs(self.y - target_y) > 1:
+            self.y += (target_y - self.y) * 0.25   # ease-to-target
+            self.frame.place_configure(y=int(self.y))
+
+    # --------------------------------------------------------------------
+    def _reserved_y_position(self) -> int:
+        y = self.MARGIN_Y
+        for t in Toast.active:
+            if t is self: break
+            y += t.height + self.SPACING_Y
+        return y
+
+    # --------------------------------------------------------------------
+    def _destroy(self):
+        self.frame.destroy()
+        Toast.active.remove(self)
+
 
 def _blend(c1: str, c2: str, t: float) -> str:
     """Linear blend two #rrggbb colours at t [0..1]"""

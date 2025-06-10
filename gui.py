@@ -6,6 +6,8 @@ import time
 import threading
 import os
 from bluezero import adapter, peripheral
+import ttkbootstrap as tb
+from ttkbootstrap.toast import ToastNotification
 
 # Import update_repo so we can refresh once Wi‑Fi is up
 import launch
@@ -36,13 +38,14 @@ def get_serial_number():
         return "PXunknown"
 
 def log_debug(message):
-    global debug_text
-    debug_messages.append(message)
-    # Limit log length to the last 10 messages.
-    debug_text.config(state=tk.NORMAL)
-    debug_text.delete(1.0, tk.END)
-    debug_text.insert(tk.END, "\n".join(debug_messages[-10:]))
-    debug_text.config(state=tk.DISABLED)
+    # show toast notification in top-right
+    ToastNotification(
+        title="Frame Status",
+        message=message,
+        bootstyle="info",
+        duration=3000,
+        position="top_right"
+    ).show_toast()
     print(message)
 
 def disable_pairing():
@@ -285,7 +288,7 @@ def start_gatt_server_thread():
 # --- Main GUI ---
 
 if __name__ == '__main__':
-    root = tk.Tk()
+    root = tb.Window(themename="litera")   # ← use ttkbootstrap window
     root.title("Frame Status")
     root.attributes('-fullscreen', True)
     root.bind('<Escape>', lambda e: root.attributes('-fullscreen', False))
@@ -293,9 +296,7 @@ if __name__ == '__main__':
     label = tk.Label(root, text="Checking WiFi...", font=("Helvetica", 48))
     label.pack(expand=True)
 
-    debug_text = tk.Text(root, height=10, bg="#f0f0f0")
-    debug_text.pack(fill=tk.X, side=tk.BOTTOM)
-    debug_text.config(state=tk.DISABLED)
+    # debug_text console removed — now using toast pop-ups
 
     disable_pairing()
     start_gatt_server_thread()

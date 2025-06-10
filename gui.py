@@ -39,94 +39,104 @@ PROVISIONING_CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
 SERIAL_CHAR_UUID          = "12345678-1234-5678-1234-56789abcdef2"
 
 # ──────────────────────────────────────────────────────────────────────────
-#  Toast-style logging
+#  Toast subsystem v2 – smooth stacking
 # ──────────────────────────────────────────────────────────────────────────
-toast_stack: List["Toast"] = []
+toast_stack: List["Toast"] = []            # newest at the END of list
+STACK_GAP   = 10
+MARGIN_R    = 20
+MARGIN_T    = 20
 
 def _fade_hex(hex_color: str, factor: float) -> str:
-    """Multiply a hex colour by 0‥1 alpha factor (simple RGB scaling)."""
     r = int(int(hex_color[1:3], 16) * factor)
     g = int(int(hex_color[3:5], 16) * factor)
     b = int(int(hex_color[5:7], 16) * factor)
     return f"#{r:02x}{g:02x}{b:02x}"
 
+class ToastAnim:
+    """Run a per-frame callback for `duration` ms (~60 FPS), then optional on_done."""
+    def __init__(self, widget: tk.Widget, duration: int, step_fn, on_done=None):
+        frames = max(1, duration // 16)
+        def _step(i=0):
+            if i > frames:
+                if on_done: on_done()
+                return
+            step_fn(i / frames)
+            widget.after(16, _step, i + 1)
+        _step()
+
 class Toast:
-    """Ephemeral notification that slides in, stacks, then auto-fades."""
-    WIDTH      = 380
-    PAD        = 12
-    SLIDE_MS   = 250      # slide-in duration
-    ALIVE_MS   = 4_000    # time fully visible
-    FADE_MS    = 400      # fade-out duration
+    WIDTH    = 380
+    PAD      = 12
+    SLIDE_PX = WIDTH + MARGIN_R
+    ALIVE_MS = 4_000
+    FADE_MS  = 400
 
     def __init__(self, master: tk.Tk, message: str):
         self.master = master
-        self.frame  = tk.Frame(master, bg=CLR_ACCENT2, highlightthickness=0, bd=0)
-        self.label  = tk.Label(
-            self.frame,
-            text=message,
-            fg=CLR_TEXT,
-            bg=CLR_ACCENT2,
-            justify="left",
-            wraplength=self.WIDTH - 2 * self.PAD
-        )
-        self.label.pack(padx=self.PAD, pady=(self.PAD, self.PAD - 2), anchor="w")
-
-        # determine initial vertical stack position
+        self.frame  = tk.Frame(master, bg=CLR_ACCENT2, highlightthickness=0)
+        self.label  = tk.Label(self.frame, text=message,
+                               fg=CLR_TEXT, bg=CLR_ACCENT2,
+                               wraplength=self.WIDTH-2*self.PAD, justify="left")
+        self.label.pack(padx=self.PAD, pady=(self.PAD, self.PAD-2), anchor="w")
         self.frame.update_idletasks()
-        self.height = self.frame.winfo_height()
-        y = 20
-        for t in toast_stack:
-            y += t.height + 10
+        self.h = self.frame.winfo_height()
 
-        # place off-screen to the right first
-        self.frame.place(relx=1.0, x=self.WIDTH + 20, y=y, anchor="ne")
+        # initial off-screen placement
+        y = self._calc_target_y()
+        self.frame.place(relx=1.0, x=self.SLIDE_PX, y=y, anchor="ne")
         toast_stack.append(self)
 
-        self._slide_in()
+        # slide-in
+        ToastAnim(self.frame, 250, lambda p: self.frame.place_configure(
+            x=int(self.SLIDE_PX*(1-p))
+        ))
+        # lifespan → fade-out
         self.master.after(self.ALIVE_MS, self._fade_and_destroy)
+        _reflow_toasts(skip=self)
 
-    # ─────────────────────────────── helpers ─────────────────────────────
-    def _slide_in(self):
-        steps = max(1, int(self.SLIDE_MS / 16))  # ~60 FPS
-        dx    = (self.WIDTH + 20) / steps
-
-        def step(i=0):
-            if i >= steps:
-                self.frame.place_configure(x=0)
-                return
-            self.frame.place_configure(x=-(dx * i))
-            self.master.after(16, step, i + 1)
-
-        step()
+    def _calc_target_y(self) -> int:
+        y = MARGIN_T
+        for t in toast_stack:
+            y += t.h + STACK_GAP
+        return y
 
     def _fade_and_destroy(self):
-        steps = max(1, int(self.FADE_MS / 50))
-        def fade(opacity):
-            if opacity <= 0:
-                self.frame.destroy()
-                toast_stack.remove(self)
-                _reflow_toasts()
-                return
-            new_bg = _fade_hex(CLR_ACCENT2, opacity)
-            new_fg = _fade_hex(CLR_TEXT,   opacity)
-            self.frame.configure(bg=new_bg)
-            self.label.configure(bg=new_bg, fg=new_fg)
-            self.master.after(50, fade, opacity - (1 / steps))
-        fade(1.0)
+        def fade(p):
+            op   = 1 - p
+            bg   = _fade_hex(CLR_ACCENT2, op)
+            fg   = _fade_hex(CLR_TEXT,   op)
+            self.frame.config(bg=bg)
+            self.label.config(bg=bg, fg=fg)
+        def clean():
+            self.frame.destroy()
+            toast_stack.remove(self)
+            _reflow_toasts()
+        ToastAnim(self.frame, self.FADE_MS, fade, clean)
 
-def _reflow_toasts():
-    """Recalculate y-positions after a toast disappears."""
-    y = 20
+def _reflow_toasts(skip: Optional[Toast] = None):
+    y = MARGIN_T
     for t in toast_stack:
-        t.frame.place_configure(y=y)
-        y += t.height + 10
+        target = y
+        y += t.h + STACK_GAP
+        if t is skip:
+            continue
+        cur = t.frame.winfo_y()
+        if abs(cur - target) < 2:
+            t.frame.place_configure(y=target)
+        else:
+            delta = target - cur
+            ToastAnim(t.frame, 100,
+                lambda prog, w=t.frame, s=cur, d=delta: w.place_configure(
+                    y=int(s + d*prog)
+                )
+            )
 
 def log_debug(msg: str):
-    print(msg)                   # still goes to stdout / journald
+    print(msg)
     root.after(0, Toast, root, msg)
 
 # ──────────────────────────────────────────────────────────────────────────
-#  Utility helpers copied from original gui.py
+#  Utility helpers (unchanged)
 # ──────────────────────────────────────────────────────────────────────────
 def get_serial_number() -> str:
     try:

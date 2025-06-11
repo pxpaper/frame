@@ -2,13 +2,12 @@
 """
 launch.py – updater & GUI launcher for Pixel Paper frames
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-* Waits until Internet is up (max 90 s)
-* Downloads the latest snapshot of the public GitHub repo (tarball)
-* Atomically overlays new files onto the live install dir (leaves venv/ intact)
-* Ensures a virtual-env exists **and has both `bluezero` _and_ `dbus-python`**
-* Starts the GUI with the venv’s Python (falls back to system Python if needed)
-
-No credentials, no .git directory, minimal chance of corruption.
+• Waits (≤90 s) for Internet
+• Downloads repo snapshot tarball (public URL – no creds)
+• Rsync-overlays new files (leaves venv/ intact)
+• Ensures a venv that *inherits system site-packages* and has Bluezero
+  (dbus bindings come from the OS, so no wheel compilation)
+• Starts gui.py with that venv’s Python (falls back to system Python)
 """
 
 import hashlib
@@ -23,19 +22,18 @@ import urllib.request
 # ── CONFIG ──────────────────────────────────────────────────────────────
 REPO_TARBALL_URL = (
     "https://github.com/pxpaper/frame/archive/refs/heads/main.tar.gz"
-)                           # public URL (adjust if your branch/owner changes)
-DOWNLOAD_TIMEOUT = 60       # seconds
-NETWORK_TIMEOUT  = 90       # seconds to wait for Internet
+)
+DOWNLOAD_TIMEOUT = 60          # seconds
+NETWORK_TIMEOUT  = 90          # seconds to wait for connectivity
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))  # /opt/frame
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # /opt/frame
 VENV_DIR   = os.path.join(SCRIPT_DIR, "venv")
 VENV_PY    = os.path.join(VENV_DIR, "bin", "python3")
 GUI_SCRIPT = os.path.join(SCRIPT_DIR, "gui.py")
 
 TMP_BASE   = "/tmp/pixelpaper_update"
-
-# Python packages the GUI needs
-PIP_PKGS   = ["bluezero", "dbus-python"]   # <-- NEW: dbus bindings
+PIP_FLAGS  = ["--no-deps", "--upgrade"]    # skip dbus-python dep chain
+BLUEZERO   = "bluezero"
 
 # ── helpers ──────────────────────────────────────────────────────────────
 def wait_for_network(timeout: int = NETWORK_TIMEOUT) -> bool:
@@ -43,12 +41,11 @@ def wait_for_network(timeout: int = NETWORK_TIMEOUT) -> bool:
         subprocess.run(
             ["nm-online", "--wait-for-startup", "--timeout", str(timeout)],
             check=True,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         return True
-    except FileNotFoundError:
-        return True              # nm-online not available; carry on
-    except subprocess.CalledProcessError:
+    except (FileNotFoundError, subprocess.CalledProcessError):
         return False
 
 
@@ -67,11 +64,12 @@ def download_tarball(url: str = REPO_TARBALL_URL) -> str:
     print(f"[update] downloading {url}")
     with urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT) as resp, open(local, "wb") as out:
         shutil.copyfileobj(resp, out)
-    print(f"[update] size={os.path.getsize(local)}  sha256={sha256sum(local)[:12]}")
+
+    print(f"[update] size={os.path.getsize(local)} sha256={sha256sum(local)[:12]}")
     return local
 
 
-def unpack_and_overlay(tar_path: str, dest_dir: str = SCRIPT_DIR) -> None:
+def overlay_tarball(tar_path: str, dest_dir: str = SCRIPT_DIR) -> None:
     with tempfile.TemporaryDirectory(dir=TMP_BASE) as tdir:
         print("[update] unpacking tarball")
         with tarfile.open(tar_path, "r:gz") as tar:
@@ -80,39 +78,42 @@ def unpack_and_overlay(tar_path: str, dest_dir: str = SCRIPT_DIR) -> None:
         root = next(p for p in os.listdir(tdir) if os.path.isdir(os.path.join(tdir, p)))
         src  = os.path.join(tdir, root)
 
-        print("[update] syncing new files → live dir")
+        print("[update] syncing files → live dir")
         subprocess.run(
             ["rsync", "-a", "--delete", "--exclude", "venv/", f"{src}/", f"{dest_dir}/"],
-            check=True
+            check=True,
         )
         print("[update] overlay complete")
 
 
 def ensure_venv() -> None:
-    """Create venv & install/upgrade required packages if missing."""
-    # 1. Create venv if needed
+    """Create venv (inherits system pkgs) and install / upgrade Bluezero."""
     if not os.path.exists(VENV_PY):
-        print("[venv] creating virtual-env")
-        subprocess.run([sys.executable, "-m", "venv", VENV_DIR], check=True)
+        print("[venv] creating virtual-env with system site-packages")
+        subprocess.run(
+            [sys.executable, "-m", "venv", "--system-site-packages", VENV_DIR],
+            check=True,
+        )
 
-    # 2. Upgrade pip & install/upgrade packages
-    pip_cmd = [VENV_PY, "-m", "pip"]
-    subprocess.run(pip_cmd + ["install", "--upgrade", "pip", *PIP_PKGS], check=True)
-    print("[venv] dependencies up-to-date")
+    pip = [VENV_PY, "-m", "pip"]
+    subprocess.run(pip + ["install", "--upgrade", "pip"], check=True)
+
+    # install Bluezero but *skip* building dbus-python
+    subprocess.run(pip + ["install", *PIP_FLAGS, BLUEZERO], check=True)
+    print("[venv] bluezero ready (dbus from system pkg)")
 
 
 # ── MAIN ─────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     if wait_for_network():
         try:
-            tarball = download_tarball()
-            unpack_and_overlay(tarball)
+            tb = download_tarball()
+            overlay_tarball(tb)
         except Exception as exc:
             print(f"[update] FAILED – keeping previous build\n{exc}")
     else:
         print("[update] network unavailable – skipping update")
 
-    # venv bootstrap (creates & installs bluezero + dbus-python)
     try:
         ensure_venv()
         python_bin = VENV_PY

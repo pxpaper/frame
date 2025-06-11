@@ -1,15 +1,9 @@
 #!/usr/bin/env python3
 """
 gui.py – Frame GUI & BLE provisioning for Pixel Paper
-Adds an animated spinner (loading.gif) while Chromium starts.
+Shows centred loading.gif spinner (2× speed) while Chromium launches.
 """
-import os
-import queue
-import socket
-import subprocess
-import threading
-import time
-import tkinter as tk
+import os, queue, socket, subprocess, threading, time, tkinter as tk
 from itertools import count
 
 from bluezero import adapter, peripheral
@@ -72,7 +66,7 @@ def log_debug(m):
 # ── spinner helpers ─────────────────────────────────────────────────────
 spinner_frames  = []
 spinner_running = False
-SPIN_DELAY = 40          # ms per frame → 2× speed
+SPIN_DELAY = 40   # ms per frame → twice normal speed
 
 def load_spinner():
     if not os.path.exists(SPINNER_GIF):
@@ -138,8 +132,8 @@ def update_status():
         if check_wifi_connection():
             fail_count = 0
             if chromium_process is None or chromium_process.poll() is not None:
-                label.configure(text="Wi-Fi Connected")
-                show_spinner()   # ← start spinner
+                status_label.configure(text="Wi-Fi Connected")
+                show_spinner()
                 subprocess.run(["pkill", "-f", "chromium"], check=False)
                 url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
                 chromium_process = subprocess.Popen(
@@ -147,9 +141,9 @@ def update_status():
                 )
         else:
             fail_count += 1
-            hide_spinner()    # ← stop spinner on failure
+            hide_spinner()
             if fail_count > FAIL_MAX:
-                label.configure(text="Waiting for Wi-Fi…")
+                status_label.configure(text="Waiting for Wi-Fi…")
     except Exception as e:
         log_debug(f"update_status: {e}")
 
@@ -273,7 +267,6 @@ root.attributes("-fullscreen", True)
 root.bind("<Escape>", lambda e: root.attributes("-fullscreen", False))
 root.after_idle(_show_next_toast)
 
-# center content: status label + spinner
 center = ttk.Frame(root, style="TFrame")
 center.pack(expand=True)
 

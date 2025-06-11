@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-gui.py – Frame-side GUI & BLE provisioning for Pixel Paper
-(plain-Tk widgets replaced with themed ttkbootstrap widgets)
+gui.py – Frame GUI & BLE provisioning for Pixel Paper
+Adds an animated spinner (loading.gif) while Chromium starts.
 """
 import os
 import queue
@@ -10,25 +10,30 @@ import subprocess
 import threading
 import time
 import tkinter as tk
+from itertools import count
 
 from bluezero import adapter, peripheral
 import ttkbootstrap as tb
 from ttkbootstrap.toast import ToastNotification
 from ttkbootstrap import ttk
 
-import launch   # only used for get_serial_number() helper if you reinstate update_repo()
+# ── paths ────────────────────────────────────────────────────────────────
+SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
+SPINNER_GIF  = os.path.join(SCRIPT_DIR, "loading.gif")   # put loading.gif here
 
-# ───────────────────────── Globals & constants ──────────────────────────
-FAIL_MAX            = 3
-chromium_process    = None
-fail_count          = 0
-provisioning_char   = None
+# ── constants / globals ──────────────────────────────────────────────────
+GREEN             = "#1FC742"
+FAIL_MAX          = 3
+chromium_process  = None
+fail_count        = 0
+provisioning_char = None
 
+# UUIDs
 PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 PROVISIONING_CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
 SERIAL_CHAR_UUID          = "12345678-1234-5678-1234-56789abcdef2"
 
-# ───────────────────────────── Toast queue ──────────────────────────────
+# ── toast queue ─────────────────────────────────────────────────────────
 toast_queue      = queue.SimpleQueue()
 _toast_on_screen = False
 
@@ -36,18 +41,17 @@ def _show_next_toast():
     global _toast_on_screen
     if _toast_on_screen or toast_queue.empty():
         return
-
     _toast_on_screen = True
-    message = toast_queue.get()
+    msg = toast_queue.get()
 
     class SmoothToast(ToastNotification):
         def hide_toast(self, *_):
             try:
-                alpha = float(self.toplevel.attributes("-alpha"))
-                if alpha <= 0.02:
+                a = float(self.toplevel.attributes("-alpha"))
+                if a <= 0.02:
                     self.toplevel.destroy(); _finish()
                 else:
-                    self.toplevel.attributes("-alpha", alpha - 0.02)
+                    self.toplevel.attributes("-alpha", a - 0.02)
                     self.toplevel.after(25, self.hide_toast)
             except Exception:
                 self.toplevel.destroy(); _finish()
@@ -57,22 +61,51 @@ def _show_next_toast():
         _toast_on_screen = False
         root.after_idle(_show_next_toast)
 
-    SmoothToast(title="Pixel Paper",
-                message=message,
-                bootstyle="info",
-                duration=3000,
-                position=(10, 10, "ne"),
-                alpha=0.95).show_toast()
+    SmoothToast(title="Pixel Paper", message=msg,
+                bootstyle="info", duration=3000,
+                position=(10,10,"ne"), alpha=0.95).show_toast()
 
-def log_debug(msg: str):
-    toast_queue.put(msg)
-    try:
-        root.after_idle(_show_next_toast)
-    except NameError:
-        pass
-    print(msg)
+def log_debug(m):
+    toast_queue.put(m)
+    print(m, flush=True)
 
-# ───────────────────────────── Utilities ────────────────────────────────
+# ── spinner helpers ─────────────────────────────────────────────────────
+spinner_frames  = []
+spinner_running = False
+
+def load_spinner():
+    if not os.path.exists(SPINNER_GIF):
+        return
+    for i in count():
+        try:
+            spinner_frames.append(
+                tk.PhotoImage(file=SPINNER_GIF, format=f"gif -index {i}")
+            )
+        except tk.TclError:
+            break
+
+def animate_spinner(idx=0):
+    if not spinner_running or not spinner_frames:
+        return
+    spinner_label.configure(image=spinner_frames[idx])
+    root.after(80, animate_spinner, (idx + 1) % len(spinner_frames))
+
+def show_spinner():
+    global spinner_running
+    if spinner_running or not spinner_frames:
+        return
+    spinner_label.pack(pady=(20,0))
+    spinner_running = True
+    animate_spinner()
+
+def hide_spinner():
+    global spinner_running
+    if not spinner_running:
+        return
+    spinner_label.pack_forget()
+    spinner_running = False
+
+# ── Utility functions ───────────────────────────────────────────────────
 def get_serial_number() -> str:
     try:
         with open('/proc/device-tree/serial-number') as f:
@@ -82,10 +115,11 @@ def get_serial_number() -> str:
 
 def disable_pairing():
     try:
-        subprocess.run(["bluetoothctl"], input="pairable no\nquit\n",
+        subprocess.run(["bluetoothctl"],
+                       input="pairable no\nquit\n",
                        text=True, capture_output=True, check=True)
     except Exception as e:
-        log_debug(f"Failed to disable pairing: {e}")
+        log_debug(f"Disable pairing failed: {e}")
 
 def check_wifi_connection(retries=2) -> bool:
     for _ in range(retries):
@@ -96,7 +130,7 @@ def check_wifi_connection(retries=2) -> bool:
             time.sleep(0.3)
     return False
 
-# ───────────────────────── Wi-Fi & Chromium ─────────────────────────────
+# ── Wi-Fi & Chromium status loop ────────────────────────────────────────
 def update_status():
     global chromium_process, fail_count
     try:
@@ -104,17 +138,21 @@ def update_status():
             fail_count = 0
             if chromium_process is None or chromium_process.poll() is not None:
                 label.configure(text="Wi-Fi Connected")
+                show_spinner()   # ← start spinner
                 subprocess.run(["pkill", "-f", "chromium"], check=False)
                 url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
-                chromium_process = subprocess.Popen(["chromium", "--kiosk", url])
+                chromium_process = subprocess.Popen(
+                    ["chromium", "--kiosk", url]
+                )
         else:
             fail_count += 1
+            hide_spinner()    # ← stop spinner on failure
             if fail_count > FAIL_MAX:
                 label.configure(text="Waiting for Wi-Fi…")
     except Exception as e:
         log_debug(f"update_status: {e}")
 
-# ───────────────────────── BLE helper callbacks ────────────────────────
+# ── BLE callbacks, GATT server thread ────────────────────────────────────
 def handle_wifi_data(data: str):
     """Parse 'SSID;PASS:pwd' payload and create a Wi-Fi profile."""
     try:
@@ -191,7 +229,7 @@ def ble_callback(value, _options):
     except Exception as e:
         log_debug(f"ble_callback: {e}")
 
-# ───────────────────────── BLE server thread ────────────────────────────
+# ── BLE server thread ────────────────────────────────────────────────────
 def start_gatt_server():
     global provisioning_char
     while True:
@@ -222,27 +260,27 @@ def start_gatt_server():
 def start_gatt_server_thread():
     threading.Thread(target=start_gatt_server, daemon=True).start()
 
-# ──────────────────────────── Main GUI ─────────────────────────────────
-if __name__ == "__main__":
-    GREEN = "#1FC742"
+# ── Build GUI ───────────────────────────────────────────────────────────
+root = tb.Window(themename="litera")
+root.style.colors.set("info", GREEN)
+root.style.configure("TFrame", background="black")
+root.style.configure("Status.TLabel", background="black",
+                     foreground=GREEN, font=("Helvetica", 48))
+root.configure(bg="black")
+root.title("Frame Status")
+root.attributes("-fullscreen", True)
+root.bind("<Escape>", lambda e: root.attributes("-fullscreen", False))
+root.after_idle(_show_next_toast)
 
-    root = tb.Window(themename="litera")
-    root.style.colors.set("info", GREEN)
-    root.style.configure("TFrame", background="black")           # full bg
-    root.style.configure("Status.TLabel",
-                         background="black", foreground=GREEN,
-                         font=("Helvetica", 48))
+label = ttk.Label(root, text="Checking Wi-Fi…", style="Status.TLabel")
+label.pack(expand=True)
 
-    root.configure(bg="black")
-    root.title("Frame Status")
-    root.attributes("-fullscreen", True)
-    root.bind("<Escape>", lambda e: root.attributes("-fullscreen", False))
+# spinner widget (initially hidden)
+load_spinner()
+spinner_label = ttk.Label(root)
 
-    label = ttk.Label(root, text="Checking Wi-Fi…", style="Status.TLabel")
-    label.pack(expand=True)
+disable_pairing()
+start_gatt_server_thread()
+update_status()
 
-    disable_pairing()
-    start_gatt_server_thread()
-    update_status()
-
-    root.mainloop()
+root.mainloop()

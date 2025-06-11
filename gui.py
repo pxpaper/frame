@@ -72,6 +72,7 @@ def log_debug(m):
 # ── spinner helpers ─────────────────────────────────────────────────────
 spinner_frames  = []
 spinner_running = False
+SPIN_DELAY = 40          # ms per frame → 2× speed
 
 def load_spinner():
     if not os.path.exists(SPINNER_GIF):
@@ -88,13 +89,13 @@ def animate_spinner(idx=0):
     if not spinner_running or not spinner_frames:
         return
     spinner_label.configure(image=spinner_frames[idx])
-    root.after(80, animate_spinner, (idx + 1) % len(spinner_frames))
+    root.after(SPIN_DELAY, animate_spinner, (idx + 1) % len(spinner_frames))
 
 def show_spinner():
     global spinner_running
     if spinner_running or not spinner_frames:
         return
-    spinner_label.pack(pady=(20,0))
+    spinner_label.pack(pady=(12,0))
     spinner_running = True
     animate_spinner()
 
@@ -272,12 +273,18 @@ root.attributes("-fullscreen", True)
 root.bind("<Escape>", lambda e: root.attributes("-fullscreen", False))
 root.after_idle(_show_next_toast)
 
-label = ttk.Label(root, text="Checking Wi-Fi…", style="Status.TLabel")
-label.pack(expand=True)
+# center content: status label + spinner
+center = ttk.Frame(root, style="TFrame")
+center.pack(expand=True)
+
+status_label = ttk.Label(center,
+                         text="Checking Wi-Fi…",
+                         style="Status.TLabel")
+status_label.pack()
 
 # spinner widget (initially hidden)
 load_spinner()
-spinner_label = ttk.Label(root)
+spinner_label = ttk.Label(center, style="TLabel")   # image will be set in animate
 
 disable_pairing()
 start_gatt_server_thread()

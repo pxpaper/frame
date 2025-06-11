@@ -126,28 +126,34 @@ def nm_reconnect():
 
 
 def update_status():
-    """Check Wi-Fi, relaunch Chromium if needed, update repo once online."""
-    global chromium_process, fail_count, repo_updated
-    try:
-        up = check_wifi_connection()
-        if up:
-            if fail_count:
-                fail_count = 0
-                if not repo_updated:
-                    threading.Thread(target=launch.update_repo,
-                                     daemon=True).start()
-                    repo_updated = True
+     global chromium_process, fail_count, repo_updated
+     try:
+         up = check_wifi_connection()
+         if up:
+             if fail_count:
+                 fail_count = 0
+                # disabled repo auto-update (now in launch.py)
+                # if not repo_updated:
+                #     threading.Thread(target=launch.update_repo,
+                #                      daemon=True).start()
+                #     repo_updated = True
 
-            if chromium_process is None or chromium_process.poll() is not None:
-                label.config(text="Wi-Fi Connected")
-                subprocess.run(["pkill", "-f", "chromium"], check=False)
-                url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
-                chromium_process = subprocess.Popen(["chromium", "--kiosk", url])
-        #else:
-            #log_debug("Wi-Fi Disconnected, Retrying...")
+             if chromium_process is None or chromium_process.poll() is not None:
+                 label.config(text="Wi-Fi Connected")
+                 subprocess.run(["pkill", "-f", "chromium"], check=False)
+                 url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
+                 chromium_process = subprocess.Popen(["chromium", "--kiosk", url])
+                 root.withdraw()   # hide the Tk window once Chromium launches
 
-    except Exception as e:
-        log_debug(f"Error: update_status: {e}")
+         else:
+            # Wi-Fi dropped → restore status GUI
+            if chromium_process:
+                chromium_process.terminate()
+                chromium_process = None
+            root.deiconify()
+
+     except Exception as e:
+         log_debug(f"Error: update_status: {e}")
 
 # ───────────────────────── BLE helper callbacks ─────────────────────────────
 def handle_wifi_data(data: str):

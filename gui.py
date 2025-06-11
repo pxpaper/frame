@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import tkinter as tk
 import socket
 import subprocess
@@ -13,18 +10,14 @@ from bluezero import adapter, peripheral
 import ttkbootstrap as tb
 from ttkbootstrap.toast import ToastNotification
 
-# ────────────────────────────────────────────────────────────────────────────
-# Import update_repo so we can refresh once Wi-Fi comes up
-# ────────────────────────────────────────────────────────────────────────────
 import launch
-
 
 # ─────────────────────────── Globals & constants ────────────────────────────
 launched            = False
 debug_messages      = []
 provisioning_char   = None
-repo_updated        = False        # run update only once
-FAIL_MAX            = 3            # how many misses before we declare “offline”
+repo_updated        = False
+FAIL_MAX            = 3
 fail_count          = 0
 chromium_process    = None
 
@@ -35,14 +28,14 @@ SERIAL_CHAR_UUID          = "12345678-1234-5678-1234-56789abcdef2"
 
 # ──────────────────────── Thread-safe toast queue ───────────────────────────
 toast_queue        = queue.SimpleQueue()
-_toast_on_screen   = False         # semaphore so only one toast shows at once
+_toast_on_screen   = False
 
 
 def _show_next_toast():
     """Pop one message off the queue and display it on the UI thread."""
     global _toast_on_screen
     if _toast_on_screen or toast_queue.empty():
-        return                      # either busy or nothing waiting
+        return
 
     _toast_on_screen = True
     message = toast_queue.get()
@@ -65,15 +58,15 @@ def _show_next_toast():
     def _finish_toast():
         global _toast_on_screen
         _toast_on_screen = False
-        root.after_idle(_show_next_toast)   # show next in line (if any)
+        root.after_idle(_show_next_toast)
 
     SmoothToast(
-        title="Frame Status",
+        title="Pixel Paper",
         message=message,
-        bootstyle="info",          # uses the colour we set below (#1FC742)
-        duration=3000,             # ms visible before fade starts
+        bootstyle="info",
+        duration=3000,
         position=(10, 10, "ne"),
-        alpha=0.95                 # start slightly translucent
+        alpha=0.95
     ).show_toast()
 
 
@@ -97,7 +90,6 @@ def get_serial_number() -> str:
     except Exception:
         return "PXunknown"
 
-
 def disable_pairing():
     try:
         subprocess.run(
@@ -110,7 +102,6 @@ def disable_pairing():
     except Exception as e:
         log_debug("Failed to disable pairing: " + str(e))
 
-
 def check_wifi_connection(retries: int = 2) -> bool:
     for _ in range(retries):
         try:
@@ -121,7 +112,6 @@ def check_wifi_connection(retries: int = 2) -> bool:
             time.sleep(0.3)
     return False
 
-
 def nm_reconnect():
     try:
         ssid = subprocess.check_output(
@@ -130,9 +120,9 @@ def nm_reconnect():
             text=True
         ).split(':')[0]
         subprocess.run(["nmcli", "connection", "up", ssid], check=False)
-        log_debug(f"nmcli reconnect issued for {ssid}")
+        #log_debug(f"nmcli reconnect issued for {ssid}")
     except Exception as e:
-        log_debug(f"nm_reconnect err: {e}")
+        log_debug(f"Error: nm_reconnect: {e}")
 
 
 def update_status():
@@ -149,16 +139,15 @@ def update_status():
                     repo_updated = True
 
             if chromium_process is None or chromium_process.poll() is not None:
-                label.config(text="Wi-Fi OK → starting frame")
+                label.config(text="Wi-Fi Connected")
                 subprocess.run(["pkill", "-f", "chromium"], check=False)
                 url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
                 chromium_process = subprocess.Popen(["chromium", "--kiosk", url])
-        else:
-            log_debug("Wi-Fi down, waiting to retry")
+        #else:
+            #log_debug("Wi-Fi Disconnected, Retrying...")
 
     except Exception as e:
-        log_debug(f"update_status error: {e}")
-
+        log_debug(f"Error: update_status: {e}")
 
 # ───────────────────────── BLE helper callbacks ─────────────────────────────
 def handle_wifi_data(data: str):
@@ -166,7 +155,7 @@ def handle_wifi_data(data: str):
     Expects "MySSID;PASS:supersecret".
     Builds one NetworkManager keyfile profile with stored PSK so NM is silent.
     """
-    log_debug("Handling Wi-Fi data: " + data)
+    #log_debug("Handling Wi-Fi data: " + data)
     try:
         ssid, pass_part = data.split(';', 1)
         password = pass_part.split(':', 1)[1]
@@ -186,7 +175,7 @@ def handle_wifi_data(data: str):
                 subprocess.run(["nmcli", "connection", "delete", uuid],
                                check=False, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        log_debug(f"Could not list profiles: {e.stderr.strip()}")
+        log_debug(f"Error: Could not list profiles: {e.stderr.strip()}")
 
     try:
         subprocess.run([
@@ -205,10 +194,9 @@ def handle_wifi_data(data: str):
         subprocess.run(["nmcli", "connection", "up", ssid],
                        check=True, capture_output=True, text=True)
 
-        log_debug(f"Activated Wi-Fi connection '{ssid}' non-interactively.")
+        log_debug(f"Connected to: '{ssid}'")
     except subprocess.CalledProcessError as e:
         log_debug(f"nmcli error {e.returncode}: {e.stderr.strip() or e.stdout.strip()}")
-
 
 def handle_orientation_change(data: str):
     """
@@ -224,7 +212,7 @@ def handle_orientation_change(data: str):
             shell=True, text=True
         ).strip()
     except subprocess.CalledProcessError as e:
-        log_debug(f"Failed to detect current mode: {e}")
+        log_debug(f"Error: Failed to detect current mode: {e}")
         return
 
     cfg = f"""profile {{
@@ -236,13 +224,13 @@ def handle_orientation_change(data: str):
     with open(cfg_path, "w") as f:
         f.write(cfg)
     os.chmod(cfg_path, 0o600)
-    log_debug(f"Wrote kanshi config: mode={mode}, transform={data}")
+    #log_debug(f"Wrote kanshi config: mode={mode}, transform={data}")
 
     subprocess.run(["killall", "kanshi"], check=False)
     subprocess.Popen(["kanshi", "-c", cfg_path],
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    log_debug(f"Rotated {output} → {data}° via kanshi")
-
+    orientation = "Portrait" if data in ["90", "270"] else "Landscape"
+    log_debug(f"{orientation}")
 
 def ble_callback(value, options):
     try:
@@ -250,19 +238,19 @@ def ble_callback(value, options):
             return
         value_bytes = bytes(value) if isinstance(value, list) else value
         message = value_bytes.decode("utf-8", errors="ignore").strip()
-        log_debug("Received BLE data: " + message)
+        #log_debug("Received BLE data: " + message)
 
         if message.startswith("WIFI:"):
             handle_wifi_data(message[len("WIFI:"):].strip())
         elif message.startswith("ORIENT:"):
             handle_orientation_change(message[len("ORIENT:"):].strip())
         elif message == "REBOOT":
-            log_debug("Reboot command received; rebooting now.")
+            log_debug("Restarting...")
             subprocess.run(["sudo", "reboot"], check=False)
         else:
-            log_debug("Unknown BLE command received.")
+            log_debug("Error: Unknown BLE command received.")
     except Exception as e:
-        log_debug("Error in ble_callback: " + str(e))
+        log_debug("Error: ble_callback: " + str(e))
 
 
 # ───────────────────────────── BLE server ───────────────────────────────────
@@ -272,12 +260,12 @@ def start_gatt_server():
         try:
             dongles = adapter.Adapter.available()
             if not dongles:
-                log_debug("No Bluetooth adapters available for GATT server!")
+                log_debug("Error: No Bluetooth adapters available!")
                 time.sleep(5)
                 continue
 
             dongle_addr = list(dongles)[0].address
-            log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
+            #log_debug("Using Bluetooth adapter for GATT server: " + dongle_addr)
 
             ble_periph = peripheral.Peripheral(dongle_addr, local_name="PixelPaper")
             ble_periph.add_service(1, PROVISIONING_SERVICE_UUID, primary=True)
@@ -295,24 +283,23 @@ def start_gatt_server():
                 read_callback=lambda options: list(get_serial_number().encode())
             )
 
-            log_debug("Publishing GATT server for provisioning and serial...")
+            #log_debug("Publishing GATT server for provisioning and serial...")
             ble_periph.publish()
-            log_debug("GATT server event loop ended.")
+            #log_debug("GATT server event loop ended.")
         except Exception as e:
-            log_debug("Exception in start_gatt_server: " + str(e))
-        log_debug("Restarting GATT server in 5 seconds...")
+            log_debug("Error: Exception in start_gatt_server: " + str(e))
+        log_debug("Error: Restarting GATT server in 5 seconds...")
         time.sleep(5)
 
 
 def start_gatt_server_thread():
     threading.Thread(target=start_gatt_server, daemon=True).start()
 
-
 # ─────────────────────────────── Main GUI ───────────────────────────────────
 if __name__ == '__main__':
      root = tb.Window(themename="litera")
-     root.style.colors.set('info', '#1FC742')   # custom green for “info”
-     root.configure(bg='black')                # make window background black
+     root.style.colors.set('info', '#1FC742')
+     root.configure(bg='black')
      root.title("Frame Status")
      root.attributes('-fullscreen', True)
      root.bind('<Escape>', lambda e: root.attributes('-fullscreen', False))
@@ -321,13 +308,13 @@ if __name__ == '__main__':
         root,
         text="Checking Wi-Fi...",
         font=("Helvetica", 48),
-        bg='black',        # match the window
-        fg='#1FC742'       # green text
+        bg='black',
+        fg='#1FC742'
     )
      label.pack(expand=True)
 
      disable_pairing()
      start_gatt_server_thread()
-     update_status()                            # first status check
+     update_status()
 
      root.mainloop()

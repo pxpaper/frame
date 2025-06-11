@@ -288,10 +288,8 @@ def start_gatt_server_thread():
 # --- Main GUI ---
 
 if __name__ == '__main__':
-    root = tb.Window(themename="litera")    # ← use ttkbootstrap window
-    # override the 'info' bootstyle color (any future ToastNotification with bootstyle="info" will use this)
+    root = tb.Window(themename="litera")   # ← use ttkbootstrap window
     root.style.colors.set('info', '#1FC742')
-
     root.title("Frame Status")
     root.attributes('-fullscreen', True)
     root.bind('<Escape>', lambda e: root.attributes('-fullscreen', False))

@@ -161,6 +161,8 @@ def update_status():
     except Exception as e:
         log_debug(f"update_status: {e}")
 
+    root.after(5000, update_status)
+
 # ──────────────────── BLE callbacks & helpers ──────────────────────────
 def handle_wifi_data(data: str):
     """Parse 'SSID;PASS:pwd' and create a Wi-Fi profile."""
@@ -181,7 +183,7 @@ def handle_wifi_data(data: str):
         subprocess.run(["nmcli", "connection", "up", ssid], check=True)
         log_debug(f"Connected to: '{ssid}'")
     except subprocess.CalledProcessError as e:
-        log_debug(f"nmcli error {e.returncode}: {e.stderr.strip() or e.stdout.strip()}")
+        log_debug(f"Error: nmcli: {e.returncode}: {e.stderr.strip() or e.stdout.strip()}")
 
 def handle_orientation_change(data: str):
     """Rotate HDMI output via kanshi (data = normal|90|180|270)."""

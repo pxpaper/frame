@@ -208,12 +208,10 @@ def handle_wifi_data(data: str):
         log_debug(f"Auth failed: {e.stderr.strip() or e.stdout.strip()}")
         send_status("AUTH_FAIL")
         subprocess.run(["nmcli", "connection", "delete", ssid], check=False)
+        global fail_count
         hide_spinner()
-        status_label.configure(
-            text="Wi-Fi authentication failed — wrong password?"
-        )
-        # prevent update_status from overwriting immediately
-        fail_count = 0
+        status_label.configure("Wi-Fi authentication failed — wrong password?")
+        fail_count = -999
 
     # 3. give NetworkManager a few seconds to finish auth/DHCP
     def final_verdict():

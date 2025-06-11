@@ -1,3 +1,2 @@
-# requirements-frame.txt  (in the same folder as gui.py)
-ttkbootstrap>=1.5
-# pillow is pulled automatically because ttkbootstrap depends on it
+bluezero==0.9.1      # keep --no-deps
+ttkbootstrap==1.5.1

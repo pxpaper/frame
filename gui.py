@@ -310,17 +310,24 @@ def start_gatt_server_thread():
 
 # ─────────────────────────────── Main GUI ───────────────────────────────────
 if __name__ == '__main__':
-    root = tb.Window(themename="litera")
-    root.style.colors.set('info', '#1FC742')   # custom green for “info”
-    root.title("Frame Status")
-    root.attributes('-fullscreen', True)
-    root.bind('<Escape>', lambda e: root.attributes('-fullscreen', False))
+     root = tb.Window(themename="litera")
+     root.style.colors.set('info', '#1FC742')   # custom green for “info”
+     root.configure(bg='black')                # make window background black
+     root.title("Frame Status")
+     root.attributes('-fullscreen', True)
+     root.bind('<Escape>', lambda e: root.attributes('-fullscreen', False))
 
-    label = tk.Label(root, text="Checking Wi-Fi...", font=("Helvetica", 48))
-    label.pack(expand=True)
+     label = tk.Label(
+        root,
+        text="Checking Wi-Fi...",
+        font=("Helvetica", 48),
+        bg='black',        # match the window
+        fg='#1FC742'       # green text
+    )
+     label.pack(expand=True)
 
-    disable_pairing()
-    start_gatt_server_thread()
-    update_status()                            # first status check
+     disable_pairing()
+     start_gatt_server_thread()
+     update_status()                            # first status check
 
-    root.mainloop()
+     root.mainloop()

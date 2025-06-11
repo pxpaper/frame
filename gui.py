@@ -38,8 +38,9 @@ def get_serial_number():
         return "PXunknown"
 
 def log_debug(message):
-    # show toast notification in top-right
+    # show toast notification in top-right of our full‐screen window
     ToastNotification(
+        master=tk._default_root,
         title="Frame Status",
         message=message,
         bootstyle="info",

@@ -187,8 +187,33 @@ def handle_wifi_data(data: str):
     ], check=False)
 
     # 2. bring it up (don’t fail on non-zero yet)
-    subprocess.run(["nmcli", "connection", "up", ssid],
-                   capture_output=True, text=True)
+    try:
+        # bring the connection up; some drivers return 0 even on bad key
+        up = subprocess.run(
+            ["nmcli", "connection", "up", ssid],
+            capture_output=True, text=True
+        )
+        if up.returncode == 0 and check_wifi_connection():
+            log_debug(f"Connected to: '{ssid}'")
+            send_status("OK")
+            return
+        # non-zero or no connectivity → treat as error
+        raise subprocess.CalledProcessError(
+            up.returncode, up.args,
+            output=up.stdout, stderr=up.stderr
+        )
+
+    except subprocess.CalledProcessError as e:
+        # Any authentication error ends up here
+        log_debug(f"Auth failed: {e.stderr.strip() or e.stdout.strip()}")
+        subprocess.run(["nmcli", "connection", "delete", ssid], check=False)
+        hide_spinner()
+        status_label.configure(
+            text="Wi-Fi authentication failed — wrong password?"
+        )
+        send_status("AUTH_FAIL")
+        # prevent update_status from overwriting immediately
+        fail_count = 0
 
     # 3. give NetworkManager a few seconds to finish auth/DHCP
     def final_verdict():

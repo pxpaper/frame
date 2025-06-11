@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
 gui.py – Frame GUI & BLE provisioning for Pixel Paper
-Adds centred loading.gif spinner (2× speed) while Chromium launches,
-plus BLE command  CLEAR_WIFI  to wipe every stored Wi-Fi profile.
+Shows centred loading.gif spinner (2× speed) while Chromium launches,
+adds CLEAR_WIFI, and starts in “Waiting for Wi-Fi…”.
 """
+
 import os, queue, socket, subprocess, threading, time, tkinter as tk
 from itertools import count
 from bluezero import adapter, peripheral
@@ -19,7 +20,6 @@ SPINNER_GIF = os.path.join(SCRIPT_DIR, "loading.gif")   # put loading.gif here
 GREEN = "#1FC742"
 FAIL_MAX          = 3
 chromium_process  = None
-fail_count        = 0
 provisioning_char = None
 
 PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
@@ -143,24 +143,17 @@ def clear_wifi_profiles():
 
 # ───────────────────── Wi-Fi & Chromium status loop ────────────────────
 def update_status():
-    global chromium_process, fail_count
-    try:
-        if check_wifi_connection():
-            fail_count = 0
-            if chromium_process is None or chromium_process.poll() is not None:
-                status_label.configure(text="Wi-Fi Connected")
-                show_spinner()
-                subprocess.run(["pkill", "-f", "chromium"], check=False)
-                url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
-                chromium_process = subprocess.Popen(["chromium", "--kiosk", url])
-        else:
-            fail_count += 1
-            hide_spinner()
-            if fail_count > FAIL_MAX:
-                status_label.configure(text="Waiting for Wi-Fi…")
-    except Exception as e:
-        log_debug(f"update_status: {e}")
-
+    global chromium_process
+    if check_wifi_connection():
+        if chromium_process is None or chromium_process.poll() is not None:
+            status_label.config(text="Wi-Fi Connected")
+            show_spinner()
+            subprocess.run(["pkill", "-f", "chromium"], check=False)
+            url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
+            chromium_process = subprocess.Popen(["chromium", "--kiosk", url])
+    else:
+        hide_spinner()
+        status_label.config(text="Waiting for Wi-Fi…")
     root.after(5000, update_status)
 
 # ──────────────────── BLE callbacks & helpers ──────────────────────────
@@ -258,7 +251,7 @@ root.after_idle(_show_next_toast)
 center = ttk.Frame(root, style="TFrame")
 center.pack(expand=True)
 
-status_label = ttk.Label(center, text="Checking Wi-Fi…", style="Status.TLabel")
+status_label = ttk.Label(center, text="Waiting for Wi-Fi…", style="Status.TLabel")
 status_label.pack()
 
 load_spinner()

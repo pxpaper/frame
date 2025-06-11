@@ -40,7 +40,7 @@ def get_serial_number():
 def log_debug(message):
     # show toast notification in top-right of our full‐screen window
     ToastNotification(
-        master=tk._default_root,
+        master=tk.root,
         title="Frame Status",
         message=message,
         bootstyle="info",

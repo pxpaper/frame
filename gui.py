@@ -1,4 +1,5 @@
 import tkinter as tk
+from ttkbootstrap import ttk
 import socket
 import subprocess
 import time
@@ -299,7 +300,6 @@ def start_gatt_server_thread():
 if __name__ == '__main__':
      root = tb.Window(themename="litera")
      GREEN = "#1FC742"
-     # override info and theme‐wide styles
      root.style.colors.set('info', GREEN)
      root.style.configure("TFrame", background="black")
      root.style.configure("TLabel", background="black", foreground=GREEN)
@@ -308,14 +308,17 @@ if __name__ == '__main__':
      root.title("Frame Status")
      root.attributes('-fullscreen', True)
      root.bind('<Escape>', lambda e: root.attributes('-fullscreen', False))
-     # re-assert fullscreen after any toast hides
      root.bind("<<ToastHidden>>", lambda *_: root.attributes('-fullscreen', True))
 
-     label = tk.Label(
+     # define a custom ttk style for status text
+     root.style.configure("Status.TLabel",
+                          background="black",
+                          foreground=GREEN,
+                          font=("Helvetica", 48))
+     label = ttk.Label(
          root,
          text="Checking Wi-Fi…",
-         font=("Helvetica", 48),
-         # background/foreground now inherited from TLabel style
+         style="Status.TLabel"
      )
      label.pack(expand=True)
 

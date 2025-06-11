@@ -1,5 +1,4 @@
 import tkinter as tk
-from ttkbootstrap import ttk
 import socket
 import subprocess
 import time
@@ -299,27 +298,19 @@ def start_gatt_server_thread():
 # ─────────────────────────────── Main GUI ───────────────────────────────────
 if __name__ == '__main__':
      root = tb.Window(themename="litera")
-     GREEN = "#1FC742"
-     root.style.colors.set('info', GREEN)
-     root.style.configure("TFrame", background="black")
-     root.style.configure("TLabel", background="black", foreground=GREEN)
-     root.configure(background="black")
-
+     root.style.colors.set('info', '#1FC742')
+     root.configure(bg='black')
      root.title("Frame Status")
      root.attributes('-fullscreen', True)
      root.bind('<Escape>', lambda e: root.attributes('-fullscreen', False))
-     root.bind("<<ToastHidden>>", lambda *_: root.attributes('-fullscreen', True))
 
-     # define a custom ttk style for status text
-     root.style.configure("Status.TLabel",
-                          background="black",
-                          foreground=GREEN,
-                          font=("Helvetica", 48))
-     label = ttk.Label(
-         root,
-         text="Checking Wi-Fi…",
-         style="Status.TLabel"
-     )
+     label = tk.Label(
+        root,
+        text="Checking Wi-Fi...",
+        font=("Helvetica", 48),
+        bg='black',
+        fg='#1FC742'
+    )
      label.pack(expand=True)
 
      disable_pairing()

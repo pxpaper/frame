@@ -4,8 +4,7 @@ gui.py – Pixel-Paper frame GUI & BLE provisioning
 
 • Animated loading.gif spinner (2× speed) while Chromium launches
 • BLE commands: WIFI, ORIENT, CLEAR_WIFI, REBOOT
-• On wrong Wi-Fi password, shows ‘Authentication failed — wrong password?’
-  in a persistent bottom line until another Wi-Fi attempt succeeds.
+• Wrong Wi-Fi password → bottom message + toast
 """
 
 import os, queue, socket, subprocess, threading, time, tkinter as tk
@@ -15,7 +14,7 @@ import ttkbootstrap as tb
 from ttkbootstrap.toast import ToastNotification
 from ttkbootstrap import ttk
 
-# ── paths ──────────────────────────────────────────────────────────────
+# ── paths ───────────────────────────────────────────────────────────────
 SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
 SPINNER_GIF = os.path.join(SCRIPT_DIR, "loading.gif")   # provide your GIF here
 
@@ -30,7 +29,8 @@ PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 PROVISIONING_CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
 SERIAL_CHAR_UUID          = "12345678-1234-5678-1234-56789abcdef2"
 
-toast_queue, _toast_on_screen = queue.SimpleQueue(), False
+toast_queue: queue.Queue[str] = queue.SimpleQueue()
+_toast_on_screen = False
 
 # ─────────────────────────── Toast helpers ─────────────────────────────
 def _show_next_toast():
@@ -57,18 +57,30 @@ def _show_next_toast():
         _toast_on_screen = False
         root.after_idle(_show_next_toast)
 
-    # <-- master=root so the toast attaches to our fullscreen window
-    SmoothToast(master=root, title="Pixel Paper", message=msg,
-                bootstyle="info", duration=3000,
-                position=(10, 10, "ne"), alpha=0.95).show_toast()
+    SmoothToast(master=root,               # attach to main window
+                title="Pixel Paper",
+                message=msg,
+                bootstyle="info",
+                duration=3000,
+                position=(10, 10, "ne"),
+                alpha=0.95,
+                topmost=True               # make sure it floats above fullscreen
+                ).show_toast()
 
 def log_debug(msg: str):
+    """Queue a toast and print to console."""
     toast_queue.put(msg)
     print(msg, flush=True)
+    # kick the toast loop if nothing is visible
+    if not _toast_on_screen:
+        try:
+            root.after_idle(_show_next_toast)
+        except Exception:
+            pass
 
 # ───────────────────────── Spinner helpers ─────────────────────────────
 spinner_frames, spinner_running = [], False
-SPIN_DELAY = 40  # ms (≈2× normal speed)
+SPIN_DELAY = 40  # ms – ≈2 × normal speed
 
 def load_spinner():
     if not os.path.exists(SPINNER_GIF):
@@ -123,8 +135,7 @@ def check_wifi_connection():
 def clear_wifi_profiles():
     try:
         out = subprocess.check_output(
-            ["nmcli", "-t", "-f", "UUID,TYPE", "connection", "show"],
-            text=True)
+            ["nmcli", "-t", "-f", "UUID,TYPE", "connection", "show"], text=True)
         for ln in out.splitlines():
             uuid, ctype = ln.split(':', 1)
             if ctype == "802-11-wireless":
@@ -140,7 +151,7 @@ def update_status():
     try:
         if check_wifi_connection():
             fail_count = 0
-            bottom_label.config(text="")  # clear any auth-fail msg
+            bottom_label.config(text="")
             if chromium_process is None or chromium_process.poll() is not None:
                 status_label.config(text="Wi-Fi Connected")
                 show_spinner()
@@ -168,12 +179,12 @@ def handle_wifi_data(payload: str):
 
     clear_wifi_profiles()
     subprocess.run([
-        "nmcli", "connection", "add",
-        "type", "wifi", "ifname", "wlan0",
-        "con-name", ssid, "ssid", ssid,
-        "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password,
-        "802-11-wireless-security.psk-flags", "0",
-        "connection.autoconnect", "yes"
+        "nmcli","connection","add",
+        "type","wifi","ifname","wlan0",
+        "con-name",ssid,"ssid",ssid,
+        "wifi-sec.key-mgmt","wpa-psk","wifi-sec.psk",password,
+        "802-11-wireless-security.psk-flags","0",
+        "connection.autoconnect","yes"
     ], check=False)
 
     def verdict():
@@ -182,7 +193,7 @@ def handle_wifi_data(payload: str):
             log_debug(f"Connected to: '{ssid}'")
             bottom_label.config(text="")
         else:
-            subprocess.run(["nmcli", "connection", "delete", ssid], check=False)
+            subprocess.run(["nmcli","connection","delete",ssid],check=False)
             hide_spinner()
             bottom_label.config(text="Authentication failed — wrong password?")
             status_label.config(text="Waiting for Wi-Fi…")
@@ -191,31 +202,28 @@ def handle_wifi_data(payload: str):
     root.after(6000, verdict)  # allow WPA handshake
 
 def handle_orientation_change(arg: str):
-    """Rotate HDMI output via kanshi (normal|90|180|270)."""
-    output = "HDMI-A-1"
+    output="HDMI-A-1"
     try:
-        mode = subprocess.check_output(
+        mode=subprocess.check_output(
             "wlr-randr | grep '(current)' | awk '{print $1\"@\"$3}'",
             shell=True, text=True).strip()
     except subprocess.CalledProcessError as e:
         log_debug(f"Detect mode failed: {e}"); return
-    cfg = f"profile {{\n    output {output} enable mode {mode} position 0,0 transform {arg}\n}}\n"
-    p = os.path.expanduser("~/.config/kanshi/config")
+    cfg=f"profile {{\n    output {output} enable mode {mode} position 0,0 transform {arg}\n}}\n"
+    p=os.path.expanduser("~/.config/kanshi/config")
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "w") as f: f.write(cfg)
-    os.chmod(p, 0o600)
-    subprocess.run(["killall", "kanshi"], check=False)
-    subprocess.Popen(["kanshi", "-c", p],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    log_debug("Portrait" if arg in ("90", "270") else "Landscape")
+    open(p,"w").write(cfg); os.chmod(p,0o600)
+    subprocess.run(["killall","kanshi"], check=False)
+    subprocess.Popen(["kanshi","-c",p], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    log_debug("Portrait" if arg in ("90","270") else "Landscape")
 
-def ble_callback(val, _):
+def ble_callback(val,_):
     if val is None: return
-    msg = (bytes(val) if isinstance(val, list) else val).decode("utf-8", "ignore").strip()
+    msg=(bytes(val) if isinstance(val,list) else val).decode("utf-8","ignore").strip()
     if   msg.startswith("WIFI:"):   handle_wifi_data(msg[5:])
     elif msg.startswith("ORIENT:"): handle_orientation_change(msg[7:])
     elif msg == "CLEAR_WIFI":       clear_wifi_profiles(); hide_spinner(); bottom_label.config(text=""); status_label.config(text="Waiting for Wi-Fi…"); subprocess.run(["pkill","-f","chromium"], check=False)
-    elif msg == "REBOOT":           subprocess.run(["sudo", "reboot"], check=False)
+    elif msg == "REBOOT":           subprocess.run(["sudo","reboot"], check=False)
     else: log_debug("Unknown BLE cmd")
 
 # ───────────────────────── BLE server thread ──────────────────────────
@@ -227,14 +235,14 @@ def start_gatt():
             addr = list(dongles)[0].address
             ble  = peripheral.Peripheral(addr, local_name="PixelPaper")
             ble.add_service(1, PROVISIONING_SERVICE_UUID, primary=True)
-            ble.add_characteristic(1, 1, PROVISIONING_CHAR_UUID,
+            ble.add_characteristic(1,1,PROVISIONING_CHAR_UUID,
                                    value=[], notifying=False,
-                                   flags=['write', 'write-without-response'],
+                                   flags=['write','write-with-response','write-without-response'],
                                    write_callback=ble_callback)
-            ble.add_characteristic(1, 2, SERIAL_CHAR_UUID,
+            ble.add_characteristic(1,2,SERIAL_CHAR_UUID,
                                    value=list(get_serial_number().encode()),
                                    notifying=False, flags=['read'],
-                                   read_callback=lambda _o: list(get_serial_number().encode()))
+                                   read_callback=lambda _o:list(get_serial_number().encode()))
             ble.publish()
         except Exception as e: log_debug(f"GATT error: {e}")
         time.sleep(5)

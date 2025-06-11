@@ -277,7 +277,11 @@ status_label.pack()
 
 # spinner widget (initially hidden)
 load_spinner()
-spinner_label = ttk.Label(center, style="TLabel")   # image will be set in animate
+# use a plain Tk Label so there's no white border/halo
+spinner_label = tk.Label(center,
+                         bg="black",
+                         bd=0,
+                         highlightthickness=0)
 
 disable_pairing()
 start_gatt_server_thread()

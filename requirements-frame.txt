@@ -1,2 +1,2 @@
-bluezero==0.9.1      # keep --no-deps
+bluezero==0.9.1
 ttkbootstrap==1.5.1

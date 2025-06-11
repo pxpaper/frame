@@ -45,7 +45,7 @@ def log_debug(message):
         message=message,
         bootstyle="info",
         duration=3000,
-        position=(20, 20, 'ne')   # 20px from top-right, anchor 'ne' = north-east
+        position="top_right"
     ).show_toast()
     print(message)
 

@@ -140,15 +140,46 @@ def update_status():
                     repo_updated = True
 
             if chromium_process is None or chromium_process.poll() is not None:
-                label.config(text="Wi-Fi Connected")
-                subprocess.run(["pkill", "-f", "chromium"], check=False)
-                url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
-                chromium_process = subprocess.Popen(["chromium", "--kiosk", url])
-        #else:
-            #log_debug("Wi-Fi Disconnected, Retrying...")
-
+                label.configure(text="Wi-Fi Connected")
+                spinner.show()                             # ← show spinner
+                threading.Thread(target=launch_chromium,      # ← launch in background
+                                 daemon=True).start()
+        else:
+            fail_count += 1
+            if fail_count > FAIL_MAX:
+                label.configure(text="Wi-Fi Down…")
     except Exception as e:
         log_debug(f"Error: update_status: {e}")
+
+def launch_chromium():
+    """Kill old Chromium, start new kiosk, then hide the Tk window."""
+    try:
+        subprocess.run(["pkill", "-f", "chromium"], check=False)
+        url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
+        proc = subprocess.Popen(["chromium", "--kiosk", url])
+        time.sleep(2)                     # give Chromium a head-start
+        root.after(0, spinner.hide)       # stop spinner
+        root.after(0, root.withdraw)      # hide Tk window
+    except Exception as e:
+        log_debug(f"Error: launch_chromium: {e}")
+        root.after(0, spinner.hide)
+
+
+class BusySpinner:
+    """Indeterminate Progressbar for background work."""
+    def __init__(self, parent):
+        self.pb = ttk.Progressbar(parent,
+                                  mode="indeterminate",
+                                  length=240,
+                                  style="info-striped")
+    def show(self):
+        self.pb.place(relx=0.5, rely=0.6, anchor="center")
+        self.pb.start(10)
+        root.update_idletasks()
+    def hide(self):
+        self.pb.stop()
+        self.pb.place_forget()
+
 
 # ───────────────────────── BLE helper callbacks ─────────────────────────────
 def handle_wifi_data(data: str):
@@ -325,5 +356,14 @@ if __name__ == '__main__':
      disable_pairing()
      start_gatt_server_thread()
      update_status()
+
+     # create spinner after root exists
+     spinner = BusySpinner(root)
+
+     # lightweight heartbeat: poll every 2s
+     def heartbeat():
+         update_status()
+         root.after(2000, heartbeat)
+     heartbeat()
 
      root.mainloop()

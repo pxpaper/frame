@@ -45,7 +45,7 @@ def log_debug(message):
         message=message,
         bootstyle="info",
         duration=3000,
-        position="10, 10, ne"
+        position=(10, 10, "ne")
     ).show_toast()
     print(message)
 

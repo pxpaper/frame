@@ -167,42 +167,43 @@ def update_status():
 
 # ──────────────────── BLE callbacks & helpers ──────────────────────────
 def handle_wifi_data(data: str):
-    """Parse 'SSID;PASS:pwd' and create a Wi-Fi profile."""
     try:
         ssid, pass_part = data.split(';', 1)
         password = pass_part.split(':', 1)[1]
     except ValueError:
         log_debug("Wi-Fi payload malformed; expected SSID;PASS:pwd")
         return
-    clear_wifi_profiles()
-    try:
-        # add Wi-Fi connection
-        res = subprocess.run([
-            "nmcli", "connection", "add", "type", "wifi",
-            "ifname", "wlan0", "con-name", ssid, "ssid", ssid,
-            "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password,
-            "802-11-wireless-security.psk-flags", "0",
-            "connection.autoconnect", "yes"], check=True)
-        # attempt to bring it up and inspect any failure
-        up = subprocess.run(
-            ["nmcli", "connection", "up", ssid],
-            capture_output=True, text=True
-        )
 
-        if up.returncode == 0 and check_wifi_connection():
+    clear_wifi_profiles()
+
+    # 1. add the profile
+    subprocess.run([
+        "nmcli", "connection", "add",
+        "type", "wifi", "ifname", "wlan0",
+        "con-name", ssid, "ssid", ssid,
+        "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password,
+        "802-11-wireless-security.psk-flags", "0",
+        "connection.autoconnect", "yes"
+    ], check=False)
+
+    # 2. bring it up (don’t fail on non-zero yet)
+    subprocess.run(["nmcli", "connection", "up", ssid],
+                   capture_output=True, text=True)
+
+    # 3. give NetworkManager a few seconds to finish auth/DHCP
+    def final_verdict():
+        if check_wifi_connection():
             log_debug(f"Connected to: '{ssid}'")
             send_status("OK")
         else:
-            # bad password or unreachable AP: clean up and notify
             subprocess.run(["nmcli", "connection", "delete", ssid], check=False)
             hide_spinner()
             status_label.configure(text="Wi-Fi authentication failed")
             send_status("AUTH_FAIL")
-            # revert to waiting state after 6 s
             root.after(6000, lambda: status_label.configure(text="Waiting for Wi-Fi…"))
-            return  # bail early – don't store creds
-    except subprocess.CalledProcessError as e:
-        log_debug(f"nmcli add/up failed: {e.stderr.strip() or e.stdout.strip()}")
+
+    root.after(6000, final_verdict)   # ← 6-second delay
+
 
 def handle_orientation_change(data: str):
     """Rotate HDMI output via kanshi (data = normal|90|180|270)."""

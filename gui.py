@@ -245,6 +245,20 @@ def start_gatt():
 
 # ─────────────────────────── Build GUI ────────────────────────────────
 root = tb.Window(themename="litera")
+
+# ↓↓↓ NEW — hide cursor immediately  ↓↓↓
+root.config(cursor="none")                   # hide by default
+
+def _show_then_hide(_):
+    root.config(cursor="arrow")              # show on movement
+    if hasattr(_show_then_hide, "job"):
+        root.after_cancel(_show_then_hide.job)
+    _show_then_hide.job = root.after(2000,   # hide again after 2 s
+                                     lambda: root.config(cursor="none"))
+
+root.bind("<Motion>", _show_then_hide)       # track mouse movement
+# ↑↑↑ NEW — end of cursor helper   ↑↑↑
+
 root.style.colors.set("info", GREEN)
 root.style.configure("TFrame", background="black")
 root.style.configure("Status.TLabel", background="black",

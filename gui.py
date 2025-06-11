@@ -127,7 +127,6 @@ def nm_reconnect():
 
 
 def update_status():
-    """Check Wi-Fi, relaunch Chromium if needed, update repo once online."""
     global chromium_process, fail_count, repo_updated
     try:
         up = check_wifi_connection()
@@ -140,15 +139,26 @@ def update_status():
                     repo_updated = True
 
             if chromium_process is None or chromium_process.poll() is not None:
-                label.config(text="Wi-Fi Connected")
+                label.config(text="Wi-Fi Connected – launching browser…")
+                spinner.start(10)   # keep spinner going
                 subprocess.run(["pkill", "-f", "chromium"], check=False)
                 url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
                 chromium_process = subprocess.Popen(["chromium", "--kiosk", url])
-        #else:
-            #log_debug("Wi-Fi Disconnected, Retrying...")
-
+            else:
+                # Chromium is up → stop & hide spinner
+                spinner.stop()
+                spinner.place_forget()
+                label.config(text="Frame ready")
+        else:
+            label.config(text="Waiting for Wi-Fi…")
+            spinner.start(10)
+            fail_count += 1
+            if fail_count > FAIL_MAX:
+                nm_reconnect()
     except Exception as e:
-        log_debug(f"Error: update_status: {e}")
+        log_debug(f"update_status error: {e}")
+    finally:
+        root.after(1000, update_status)   # re-schedule every second
 
 # ───────────────────────── BLE helper callbacks ─────────────────────────────
 def handle_wifi_data(data: str):
@@ -297,33 +307,42 @@ def start_gatt_server_thread():
     threading.Thread(target=start_gatt_server, daemon=True).start()
 
 # ─────────────────────────────── Main GUI ───────────────────────────────────
+# MAIN GUI SETUP
+# ───────────────────────────────────────────────────────────
 if __name__ == '__main__':
-     root = tb.Window(themename="litera")
-     GREEN = "#1FC742"
-     root.style.colors.set('info', GREEN)
-     root.style.configure("TFrame", background="black")
-     root.style.configure("TLabel", background="black", foreground=GREEN)
-     root.configure(background="black")
+    root = tb.Window(themename="litera")
+    GREEN = "#1FC742"
+    root.style.colors.set('info', GREEN)
+    root.style.configure("TFrame", background="black")
+    root.style.configure("TLabel", background="black", foreground=GREEN)
+    root.configure(background="black")
 
-     root.title("Frame Status")
-     root.attributes('-fullscreen', True)
-     root.bind('<Escape>', lambda e: root.attributes('-fullscreen', False))
-     root.bind("<<ToastHidden>>", lambda *_: root.attributes('-fullscreen', True))
+    root.title("Frame Status")
+    root.attributes('-fullscreen', True)
+    root.bind('<Escape>', lambda e: root.attributes('-fullscreen', False))
+    root.bind("<<ToastHidden>>", lambda *_: root.attributes('-fullscreen', True))
 
-     # define a custom ttk style for status text
-     root.style.configure("Status.TLabel",
+    # define a custom ttk style for status text
+    root.style.configure("Status.TLabel",
                           background="black",
                           foreground=GREEN,
                           font=("Helvetica", 48))
-     label = ttk.Label(
-         root,
-         text="Checking Wi-Fi…",
-         style="Status.TLabel"
-     )
-     label.pack(expand=True)
+    label = ttk.Label(
+        root,
+        text="Checking Wi-Fi…",
+        style="Status.TLabel"
+    )
+    label.pack(expand=True)
 
-     disable_pairing()
-     start_gatt_server_thread()
-     update_status()
+    # 1) add an indeterminate spinner at bottom-center
+    spinner = ttk.Progressbar(root,
+                              mode="indeterminate",
+                              length=240,
+                              style="info.Horizontal.TProgressbar")
+    spinner.place(relx=0.5, rely=0.9, anchor="s")
 
-     root.mainloop()
+    disable_pairing()
+    start_gatt_server_thread()
+    update_status()
+
+    root.mainloop()

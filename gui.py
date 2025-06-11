@@ -10,6 +10,8 @@ from bluezero import adapter, peripheral
 import ttkbootstrap as tb
 from ttkbootstrap.toast import ToastNotification
 
+import launch
+
 # ─────────────────────────── Globals & constants ────────────────────────────
 launched            = False
 debug_messages      = []
@@ -28,17 +30,17 @@ SERIAL_CHAR_UUID          = "12345678-1234-5678-1234-56789abcdef2"
 toast_queue        = queue.SimpleQueue()
 _toast_on_screen   = False
 
-# dummy parent for toasts so they don't reset fullscreen
-_toast_parent      = None
-
 
 def _show_next_toast():
+    """Pop one message off the queue and display it on the UI thread."""
     global _toast_on_screen
     if _toast_on_screen or toast_queue.empty():
         return
+
     _toast_on_screen = True
     message = toast_queue.get()
 
+    # ── custom smoother toast (1.2 s fade-out instead of stock 0.25 s) ──
     class SmoothToast(ToastNotification):
         def hide_toast(self, *_):
             try:
@@ -59,7 +61,6 @@ def _show_next_toast():
         root.after_idle(_show_next_toast)
 
     SmoothToast(
-        master=_toast_parent,          # ← use hidden Toplevel, not root
         title="Pixel Paper",
         message=message,
         bootstyle="info",
@@ -70,70 +71,14 @@ def _show_next_toast():
 
 
 def log_debug(message: str):
+    """Thread-safe debug logger that queues toast messages for the UI."""
     toast_queue.put(message)
     try:
         root.after_idle(_show_next_toast)
     except NameError:
+        # root not yet created – only happens during initial import
         pass
     print(message)
-
-
-# ─────────────────────────────── Main GUI ───────────────────────────────────
-if __name__ == '__main__':
-    root = tb.Window(themename="litera")
-    # override 'info' color and make entire theme black/green
-    root.style.colors.set('info', '#1FC742')
-    root.style.configure('.', background='black', foreground='#1FC742')
-    root.configure(bg='black')
-
-    # keep toasts off the real window so fullscreen stays
-    _toast_parent = tk.Toplevel(root)
-    _toast_parent.withdraw()
-
-    root.title("Frame Status")
-    root.attributes('-fullscreen', True)
-    root.bind('<Escape>', lambda e: root.attributes('-fullscreen', False))
-
-    label = tk.Label(
-        root,
-        text="Checking Wi-Fi…",
-        font=("Helvetica", 48),
-        bg='black', fg='#1FC742'
-    )
-    label.pack(expand=True)
-
-    disable_pairing()
-    start_gatt_server_thread()
-    update_status()
-
-    root.mainloop()
-
-
-# ───────────────────────── Update status fix ─────────────────────────────────
-def update_status():
-    global chromium_process, fail_count, repo_updated
-    try:
-        if check_wifi_connection():
-            if fail_count:
-                fail_count = 0
-                if not repo_updated:
-                    threading.Thread(target=launch.update_repo,
-                                     daemon=True).start()
-                    repo_updated = True
-
-            if chromium_process is None or chromium_process.poll() is not None:
-                label.config(
-                    text="Wi-Fi Connected",
-                    bg='black', fg='#1FC742'
-                )
-                subprocess.run(["pkill", "-f", "chromium"], check=False)
-                url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
-                chromium_process = subprocess.Popen(["chromium", "--kiosk", url])
-        #else:
-            #log_debug("Wi-Fi Disconnected, Retrying...")
-
-    except Exception as e:
-        log_debug(f"Error: update_status: {e}")
 
 
 # ───────────────────────────── Utilities ────────────────────────────────────
@@ -184,7 +129,8 @@ def update_status():
     """Check Wi-Fi, relaunch Chromium if needed, update repo once online."""
     global chromium_process, fail_count, repo_updated
     try:
-        if check_wifi_connection():
+        up = check_wifi_connection()
+        if up:
             if fail_count:
                 fail_count = 0
                 if not repo_updated:
@@ -193,10 +139,7 @@ def update_status():
                     repo_updated = True
 
             if chromium_process is None or chromium_process.poll() is not None:
-                label.config(
-                    text="Wi-Fi Connected",
-                    bg='black', fg='#1FC742'
-                )
+                label.config(text="Wi-Fi Connected")
                 subprocess.run(["pkill", "-f", "chromium"], check=False)
                 url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
                 chromium_process = subprocess.Popen(["chromium", "--kiosk", url])
@@ -351,3 +294,33 @@ def start_gatt_server():
 
 def start_gatt_server_thread():
     threading.Thread(target=start_gatt_server, daemon=True).start()
+
+# ─────────────────────────────── Main GUI ───────────────────────────────────
+if __name__ == '__main__':
+     root = tb.Window(themename="litera")
+     GREEN = "#1FC742"
+     # override info and theme‐wide styles
+     root.style.colors.set('info', GREEN)
+     root.style.configure("TFrame", background="black")
+     root.style.configure("TLabel", background="black", foreground=GREEN)
+     root.configure(background="black")
+
+     root.title("Frame Status")
+     root.attributes('-fullscreen', True)
+     root.bind('<Escape>', lambda e: root.attributes('-fullscreen', False))
+     # re-assert fullscreen after any toast hides
+     root.bind("<<ToastHidden>>", lambda *_: root.attributes('-fullscreen', True))
+
+     label = tk.Label(
+         root,
+         text="Checking Wi-Fi…",
+         font=("Helvetica", 48),
+         # background/foreground now inherited from TLabel style
+     )
+     label.pack(expand=True)
+
+     disable_pairing()
+     start_gatt_server_thread()
+     update_status()
+
+     root.mainloop()

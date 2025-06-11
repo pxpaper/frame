@@ -206,12 +206,12 @@ def handle_wifi_data(data: str):
     except subprocess.CalledProcessError as e:
         # Any authentication error ends up here
         log_debug(f"Auth failed: {e.stderr.strip() or e.stdout.strip()}")
+        send_status("AUTH_FAIL")
         subprocess.run(["nmcli", "connection", "delete", ssid], check=False)
         hide_spinner()
         status_label.configure(
             text="Wi-Fi authentication failed — wrong password?"
         )
-        send_status("AUTH_FAIL")
         # prevent update_status from overwriting immediately
         fail_count = 0
 

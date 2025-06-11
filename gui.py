@@ -25,6 +25,8 @@ provisioning_char = None
 PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 PROVISIONING_CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
 SERIAL_CHAR_UUID          = "12345678-1234-5678-1234-56789abcdef2"
+STATUS_CHAR_UUID          = "12345678-1234-5678-1234-56789abcdef3"
+status_char               = None
 
 toast_queue      = queue.SimpleQueue()
 _toast_on_screen = False
@@ -189,12 +191,13 @@ def handle_wifi_data(data: str):
 
         if up.returncode == 0 and check_wifi_connection():
             log_debug(f"Connected to: '{ssid}'")
+            send_status("OK")
         else:
             # bad password or unreachable AP: clean up and notify
             subprocess.run(["nmcli", "connection", "delete", ssid], check=False)
             hide_spinner()
             status_label.configure(text="Wi-Fi authentication failed")
-            log_debug("Authentication failed – wrong password?")
+            send_status("AUTH_FAIL")
             # revert to waiting state after 6 s
             root.after(6000, lambda: status_label.configure(text="Waiting for Wi-Fi…"))
             return  # bail early – don't store creds
@@ -232,9 +235,14 @@ def ble_callback(value, _options):
         else: log_debug("Unknown BLE cmd")
     except Exception as e: log_debug(f"ble_callback: {e}")
 
+def send_status(txt: str):
+    if status_char:
+        status_char.set_value(list(txt.encode()))
+        status_char.notify()
+
 # ───────────────────────── BLE server thread ───────────────────────────
 def start_gatt_server():
-    global provisioning_char
+    global provisioning_char, status_char
     while True:
         try:
             dongles = adapter.Adapter.available()
@@ -251,8 +259,15 @@ def start_gatt_server():
                 value=list(get_serial_number().encode()),
                 notifying=False, flags=['read'],
                 read_callback=lambda _opt: list(get_serial_number().encode()))
+            status_char = ble.add_characteristic(
+                1, 3, STATUS_CHAR_UUID,
+                value=[], notifying=False,
+                flags=['notify','read'],
+                read_callback=lambda _o: list(b""),
+            )
             ble.publish()
-        except Exception as e: log_debug(f"GATT error: {e}")
+        except Exception as e:
+            log_debug(f"GATT error: {e}")
         time.sleep(5)
 
 def start_gatt_server_thread():

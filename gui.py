@@ -285,7 +285,7 @@ def start_gatt_server():
 
             #log_debug("Publishing GATT server for provisioning and serial...")
             ble_periph.publish()
-            #log_debug("GATT server event loop ended.")
+            log_debug("GATT server event loop ended.")
         except Exception as e:
             log_debug("Exception in start_gatt_server: " + str(e))
         log_debug("Restarting GATT server in 5 seconds...")

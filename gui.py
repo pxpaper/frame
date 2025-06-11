@@ -174,14 +174,14 @@ def handle_wifi_data(data: str):
         return
     clear_wifi_profiles()
     try:
-        # add the new network profile, capture result if needed
+        # add Wi-Fi connection
         res = subprocess.run([
-             "nmcli", "connection", "add", "type", "wifi",
-             "ifname", "wlan0", "con-name", ssid, "ssid", ssid,
-             "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password,
-             "802-11-wireless-security.psk-flags", "0",
-             "connection.autoconnect", "yes"], check=True)
-        # attempt to bring it up without raising on failure
+            "nmcli", "connection", "add", "type", "wifi",
+            "ifname", "wlan0", "con-name", ssid, "ssid", ssid,
+            "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password,
+            "802-11-wireless-security.psk-flags", "0",
+            "connection.autoconnect", "yes"], check=True)
+        # attempt to bring it up and inspect any failure
         up = subprocess.run(
             ["nmcli", "connection", "up", ssid],
             capture_output=True, text=True
@@ -190,13 +190,98 @@ def handle_wifi_data(data: str):
         if up.returncode == 0 and check_wifi_connection():
             log_debug(f"Connected to: '{ssid}'")
         else:
-            # authentication failed – remove and notify
+            # bad password or unreachable AP: clean up and notify
             subprocess.run(["nmcli", "connection", "delete", ssid], check=False)
             hide_spinner()
             status_label.configure(text="Wi-Fi authentication failed")
             log_debug("Authentication failed – wrong password?")
-            # revert to waiting after delay
+            # revert to waiting state after 6 s
             root.after(6000, lambda: status_label.configure(text="Waiting for Wi-Fi…"))
-            return
+            return  # bail early – don't store creds
     except subprocess.CalledProcessError as e:
         log_debug(f"nmcli add/up failed: {e.stderr.strip() or e.stdout.strip()}")
+
+def handle_orientation_change(data: str):
+    """Rotate HDMI output via kanshi (data = normal|90|180|270)."""
+    output = "HDMI-A-1"
+    try:
+        mode = subprocess.check_output(
+            "wlr-randr | grep '(current)' | awk '{print $1\"@\"$3}'",
+            shell=True, text=True).strip()
+    except subprocess.CalledProcessError as e:
+        log_debug(f"Detect mode failed: {e}")
+        return
+    cfg = f"profile {{\n    output {output} enable mode {mode} position 0,0 transform {data}\n}}\n"
+    path = os.path.expanduser("~/.config/kanshi/config")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f: f.write(cfg)
+    os.chmod(path, 0o600)
+    subprocess.run(["killall", "kanshi"], check=False)
+    subprocess.Popen(["kanshi", "-c", path],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    log_debug("Portrait" if data in ("90", "270") else "Landscape")
+
+def ble_callback(value, _options):
+    try:
+        if value is None: return
+        msg = (bytes(value) if isinstance(value, list) else value).decode("utf-8", "ignore").strip()
+        if   msg.startswith("WIFI:"):   handle_wifi_data(msg[5:].strip())
+        elif msg.startswith("ORIENT:"): handle_orientation_change(msg[7:].strip())
+        elif msg == "CLEAR_WIFI":       clear_wifi_profiles(); hide_spinner(); status_label.configure(text="Waiting for Wi-Fi…"); subprocess.run(["pkill","-f","chromium"],check=False)
+        elif msg == "REBOOT":           log_debug("Restarting…"); subprocess.run(["sudo","reboot"],check=False)
+        else: log_debug("Unknown BLE cmd")
+    except Exception as e: log_debug(f"ble_callback: {e}")
+
+# ───────────────────────── BLE server thread ───────────────────────────
+def start_gatt_server():
+    global provisioning_char
+    while True:
+        try:
+            dongles = adapter.Adapter.available()
+            if not dongles:
+                log_debug("No Bluetooth adapters available!"); time.sleep(5); continue
+            addr = list(dongles)[0].address
+            ble = peripheral.Peripheral(addr, local_name="PixelPaper")
+            ble.add_service(1, PROVISIONING_SERVICE_UUID, primary=True)
+            provisioning_char = ble.add_characteristic(
+                1, 1, PROVISIONING_CHAR_UUID, value=[], notifying=False,
+                flags=['write','write-without-response'], write_callback=ble_callback)
+            ble.add_characteristic(
+                1, 2, SERIAL_CHAR_UUID,
+                value=list(get_serial_number().encode()),
+                notifying=False, flags=['read'],
+                read_callback=lambda _opt: list(get_serial_number().encode()))
+            ble.publish()
+        except Exception as e: log_debug(f"GATT error: {e}")
+        time.sleep(5)
+
+def start_gatt_server_thread():
+    threading.Thread(target=start_gatt_server, daemon=True).start()
+
+# ─────────────────────────── Build GUI ─────────────────────────────────
+root = tb.Window(themename="litera")
+root.style.colors.set("info", GREEN)
+root.style.configure("TFrame", background="black")
+root.style.configure("Status.TLabel",
+                     background="black", foreground=GREEN,
+                     font=("Helvetica", 48))
+root.configure(bg="black")
+root.title("Frame Status")
+root.attributes("-fullscreen", True)
+root.bind("<Escape>", lambda e: root.attributes("-fullscreen", False))
+root.after_idle(_show_next_toast)
+
+center = ttk.Frame(root, style="TFrame")
+center.pack(expand=True)
+
+status_label = ttk.Label(center, text="Checking Wi-Fi…", style="Status.TLabel")
+status_label.pack()
+
+load_spinner()
+spinner_label = tk.Label(center, bg="black", bd=0, highlightthickness=0)
+
+disable_pairing()
+start_gatt_server_thread()
+update_status()
+
+root.mainloop()

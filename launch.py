@@ -1,125 +1,105 @@
 #!/usr/bin/env python3
 """
-launch.py – updater & GUI launcher for Pixel Paper frames
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-• Waits (≤90 s) for Internet
-• Downloads repo snapshot tarball (public URL – no creds)
-• Rsync-overlays new files (leaves venv/ intact)
-• Ensures a venv that *inherits system site-packages* and has Bluezero
-  (dbus bindings come from the OS, so no wheel compilation)
-• Starts gui.py with that venv’s Python (falls back to system Python)
+launch.py – updater & GUI bootstrapper for Pixel Paper frames
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+• Downloads latest repo tarball (public URL)
+• Rsync-overlays code (keeps venv/)
+• Builds a virtual-env that inherits system packages
+  – system provides `python3-dbus`, bluez, etc.
+• Installs:
+      1. bluezero  (with  --no-deps)
+      2. everything in requirements-frame.txt  (normal pip)
+• Starts gui.py with the venv interpreter (falls back to system Python)
 """
 
-import hashlib
-import os
-import shutil
-import subprocess
-import sys
-import tarfile
-import tempfile
-import urllib.request
+import hashlib, os, shutil, subprocess, sys, tarfile, tempfile, urllib.request
 
-# ── CONFIG ──────────────────────────────────────────────────────────────
-REPO_TARBALL_URL = (
-    "https://github.com/pxpaper/frame/archive/refs/heads/main.tar.gz"
-)
-DOWNLOAD_TIMEOUT = 60          # seconds
-NETWORK_TIMEOUT  = 90          # seconds to wait for connectivity
+# ── USER-CONFIGURABLE ────────────────────────────────────────────────────
+REPO_TAR_URL    = "https://github.com/pxpaper/frame/archive/refs/heads/main.tar.gz"
+NETWORK_TIMEOUT = 90          # seconds nm-online may wait
+DOWNLOAD_TIMEOUT= 60          # seconds urllib may wait
+REQ_FILE        = "requirements-frame.txt"   # lives beside gui.py
+TMP_BASE        = "/tmp/pixelpaper_update"
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))   # /opt/frame
-VENV_DIR   = os.path.join(SCRIPT_DIR, "venv")
-VENV_PY    = os.path.join(VENV_DIR, "bin", "python3")
-GUI_SCRIPT = os.path.join(SCRIPT_DIR, "gui.py")
-
-TMP_BASE   = "/tmp/pixelpaper_update"
-PIP_FLAGS  = ["--no-deps", "--upgrade"]    # skip dbus-python dep chain
-BLUEZERO   = "bluezero"
+# ── paths ────────────────────────────────────────────────────────────────
+SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))     # /opt/frame
+VENV_DIR    = os.path.join(SCRIPT_DIR, "venv")
+VENV_PY     = os.path.join(VENV_DIR,   "bin", "python3")
+GUI_SCRIPT  = os.path.join(SCRIPT_DIR, "gui.py")
 
 # ── helpers ──────────────────────────────────────────────────────────────
-def wait_for_network(timeout: int = NETWORK_TIMEOUT) -> bool:
+def wait_for_network(timeout=NETWORK_TIMEOUT) -> bool:
     try:
         subprocess.run(
             ["nm-online", "--wait-for-startup", "--timeout", str(timeout)],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
         return True
     except (FileNotFoundError, subprocess.CalledProcessError):
         return False
 
-
-def sha256sum(path: str) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
+def sha256sum(p: str) -> str:
+    h=hashlib.sha256()
+    with open(p,"rb") as f:
+        for chunk in iter(lambda:f.read(8192), b""):
             h.update(chunk)
     return h.hexdigest()
 
-
-def download_tarball(url: str = REPO_TARBALL_URL) -> str:
+def download_tar(url=REPO_TAR_URL) -> str:
     os.makedirs(TMP_BASE, exist_ok=True)
     local = os.path.join(TMP_BASE, "frame_latest.tar.gz")
-
     print(f"[update] downloading {url}")
-    with urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT) as resp, open(local, "wb") as out:
-        shutil.copyfileobj(resp, out)
-
+    with urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT) as r, open(local,"wb") as o:
+        shutil.copyfileobj(r,o)
     print(f"[update] size={os.path.getsize(local)} sha256={sha256sum(local)[:12]}")
     return local
 
-
-def overlay_tarball(tar_path: str, dest_dir: str = SCRIPT_DIR) -> None:
+def overlay_tar(tar_path: str, dest=SCRIPT_DIR):
     with tempfile.TemporaryDirectory(dir=TMP_BASE) as tdir:
         print("[update] unpacking tarball")
-        with tarfile.open(tar_path, "r:gz") as tar:
-            tar.extractall(path=tdir)
-
-        root = next(p for p in os.listdir(tdir) if os.path.isdir(os.path.join(tdir, p)))
+        with tarfile.open(tar_path,"r:gz") as tar: tar.extractall(tdir)
+        root = next(d for d in os.listdir(tdir) if os.path.isdir(os.path.join(tdir,d)))
         src  = os.path.join(tdir, root)
-
-        print("[update] syncing files → live dir")
+        print("[update] syncing files")
         subprocess.run(
-            ["rsync", "-a", "--delete", "--exclude", "venv/", f"{src}/", f"{dest_dir}/"],
-            check=True,
-        )
+            ["rsync","-a","--delete","--exclude","venv/",f"{src}/",f"{dest}/"],check=True)
         print("[update] overlay complete")
 
-
-def ensure_venv() -> None:
-    """Create venv (inherits system pkgs) and install / upgrade Bluezero."""
+def ensure_venv():
     if not os.path.exists(VENV_PY):
-        print("[venv] creating virtual-env with system site-packages")
-        subprocess.run(
-            [sys.executable, "-m", "venv", "--system-site-packages", VENV_DIR],
-            check=True,
-        )
+        print("[venv] creating (inherits system pkgs)")
+        subprocess.run([sys.executable,"-m","venv","--system-site-packages",VENV_DIR],check=True)
 
-    pip = [VENV_PY, "-m", "pip"]
-    subprocess.run(pip + ["install", "--upgrade", "pip"], check=True)
+    pip = [VENV_PY,"-m","pip"]
+    subprocess.run(pip+["install","--upgrade","pip"],check=True)
 
-    # install Bluezero but *skip* building dbus-python
-    subprocess.run(pip + ["install", *PIP_FLAGS, BLUEZERO], check=True)
-    print("[venv] bluezero ready (dbus from system pkg)")
+    # 1. bluezero without deps (skip dbus-python build)
+    subprocess.run(pip+["install","--no-deps","--upgrade","bluezero"],check=True)
 
+    # 2. other pure-Python deps from requirements-frame.txt
+    req_path = os.path.join(SCRIPT_DIR, REQ_FILE)
+    if os.path.isfile(req_path):
+        subprocess.run(pip+["install","-r",req_path],check=True)
 
-# ── MAIN ─────────────────────────────────────────────────────────────────
+    print("[venv] packages ready")
+
+# ── main ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     if wait_for_network():
         try:
-            tb = download_tarball()
-            overlay_tarball(tb)
-        except Exception as exc:
-            print(f"[update] FAILED – keeping previous build\n{exc}")
+            tb = download_tar()
+            overlay_tar(tb)
+        except Exception as e:
+            print(f"[update] FAILED – keeping previous build\n{e}")
     else:
         print("[update] network unavailable – skipping update")
 
     try:
         ensure_venv()
-        python_bin = VENV_PY
-    except Exception as exc:
-        print(f"[venv] ERROR – using system Python\n{exc}")
-        python_bin = sys.executable
+        py = VENV_PY
+    except Exception as e:
+        print(f"[venv] ERROR – using system Python\n{e}")
+        py = sys.executable
 
     print("[gui] launching GUI")
-    subprocess.Popen([python_bin, GUI_SCRIPT])
+    subprocess.Popen([py, GUI_SCRIPT])

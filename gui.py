@@ -218,21 +218,24 @@ def ble_callback(val, _):
     msg = (bytes(val) if isinstance(val, list) else val).decode("utf-8", "ignore").strip()
     if   msg.startswith("WIFI:"):   handle_wifi_data(msg[5:])
     elif msg.startswith("ORIENT:"): handle_orientation_change(msg[7:])
-    # --- START: Added brightness control ---
     elif msg.startswith("BRIGHT:"):
         try:
             brightness_value = int(msg[7:])
             if 0 <= brightness_value <= 100:
                 subprocess.run(["ddcutil", "set", "10", str(brightness_value)], check=True)
-                log_debug(f"Brightness set to {brightness_value}%")
+                log_debug(f"Brightness: {brightness_value}%")
             else:
                 log_debug("Brightness value out of range (0-100)")
         except (ValueError, subprocess.CalledProcessError) as e:
-            log_debug(f"Brightness command failed: {e}")
-    # --- END: Added brightness control ---
-    elif msg == "CLEAR_WIFI":       clear_wifi_profiles(); hide_spinner(); bottom_label.config(text=""); status_label.config(text="Waiting for Wi-Fi…"); subprocess.run(["pkill","-f","chromium"], check=False)
-    elif msg == "REBOOT":           subprocess.run(["sudo", "reboot"], check=False)
-    else: log_debug(f"Unknown BLE cmd: {msg}")
+            log_debug(f"Error: Brightness command failed: {e}")
+    elif msg == "CLEAR_WIFI":
+        clear_wifi_profiles(); hide_spinner()
+        bottom_label.config(text=""); status_label.config(text="Waiting for Wi-Fi…")
+        subprocess.run(["pkill","-f","chromium"], check=False)
+    elif msg == "REBOOT":
+        subprocess.run(["sudo", "reboot"], check=False)
+    else:
+        log_debug(f"Error: Unknown BLE cmd: {msg}")
 
 # ───────────────────────── BLE server thread ──────────────────────────
 def start_gatt():
@@ -258,16 +261,18 @@ def start_gatt():
 # ─────────────────────────── Build GUI ────────────────────────────────
 root = tb.Window(themename="litera")
 
-root.config(cursor="none")
+# ↓↓↓ NEW — hide cursor immediately  ↓↓↓
+root.config(cursor="none")                   # hide by default
 
 def _show_then_hide(_):
-    root.config(cursor="arrow")
+    root.config(cursor="arrow")              # show on movement
     if hasattr(_show_then_hide, "job"):
         root.after_cancel(_show_then_hide.job)
-    _show_then_hide.job = root.after(500,
+    _show_then_hide.job = root.after(500,   # hide again after 0.5 s
                                      lambda: root.config(cursor="none"))
 
-root.bind("<Motion>", _show_then_hide)
+root.bind("<Motion>", _show_then_hide)       # track mouse movement
+# ↑↑↑ NEW — end of cursor helper   ↑↑↑
 
 root.style.colors.set("info", GREEN)
 root.style.configure("TFrame", background="black")
@@ -289,6 +294,7 @@ status_label.pack()
 load_spinner()
 spinner_label = tk.Label(center, bg="black", bd=0, highlightthickness=0)
 
+# persistent bottom-line message
 bottom_label = ttk.Label(root, text="", style="Secondary.TLabel")
 bottom_label.pack(side="bottom", pady=10)
 

@@ -1,9 +1,8 @@
-#!/usr/bin/env python3
 """
 gui.py – Pixel-Paper frame GUI & BLE provisioning
 
 • Animated loading.gif spinner (2× speed) while Chromium launches
-• BLE commands: WIFI, ORIENT, CLEAR_WIFI, REBOOT
+• BLE commands: WIFI, ORIENT, BRIGHT, CLEAR_WIFI, REBOOT
 • On wrong Wi-Fi password, shows ‘Authentication failed — wrong password?’
   in a persistent bottom line until another Wi-Fi attempt succeeds.
 """
@@ -17,7 +16,7 @@ from ttkbootstrap import ttk
 
 # ── paths ───────────────────────────────────────────────────────────────
 SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
-SPINNER_GIF = os.path.join(SCRIPT_DIR, "loading.gif")   # provide your GIF here
+SPINNER_GIF = os.path.join(SCRIPT_DIR, "loading.gif")
 
 # ── constants & globals ─────────────────────────────────────────────────
 GREEN  = "#1FC742"
@@ -72,7 +71,7 @@ def log_debug(msg: str):
 
 # ───────────────────────── Spinner helpers ─────────────────────────────
 spinner_frames, spinner_running = [], False
-SPIN_DELAY = 40  # ms (≈2× normal speed)
+SPIN_DELAY = 40
 
 def load_spinner():
     if not os.path.exists(SPINNER_GIF):
@@ -144,7 +143,7 @@ def update_status():
     try:
         if check_wifi_connection():
             fail_count = 0
-            bottom_label.config(text="")  # clear any auth-fail msg
+            bottom_label.config(text="")
             if chromium_process is None or chromium_process.poll() is not None:
                 status_label.config(text="Wi-Fi Connected")
                 show_spinner()
@@ -190,9 +189,9 @@ def handle_wifi_data(payload: str):
             hide_spinner()
             bottom_label.config(text="Authentication failed — wrong password?")
             status_label.config(text="Waiting for Wi-Fi…")
-            fail_count = -999  # keep bottom msg until next attempt
+            fail_count = -999
 
-    root.after(6000, verdict)  # allow WPA handshake
+    root.after(6000, verdict)
 
 def handle_orientation_change(arg: str):
     """Rotate HDMI output via kanshi (normal|90|180|270)."""
@@ -213,14 +212,30 @@ def handle_orientation_change(arg: str):
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     log_debug("Portrait" if arg in ("90", "270") else "Landscape")
 
+# --- NEW: Function to handle brightness commands ---
+def handle_brightness_change(payload: str):
+    """Set monitor brightness using ddcutil (0-100)."""
+    try:
+        # Ensure the value is an integer between 0 and 100
+        brightness = int(payload)
+        if not (0 <= brightness <= 100):
+            raise ValueError("Brightness must be between 0 and 100")
+        
+        # Use subprocess to call the command line tool
+        subprocess.run(["ddcutil", "set", "10", str(brightness)], check=True)
+        log_debug(f"Brightness set to {brightness}%")
+    except (ValueError, subprocess.CalledProcessError) as e:
+        log_debug(f"Brightness error: {e}")
+
 def ble_callback(val, _):
     if val is None: return
     msg = (bytes(val) if isinstance(val, list) else val).decode("utf-8", "ignore").strip()
     if   msg.startswith("WIFI:"):   handle_wifi_data(msg[5:])
     elif msg.startswith("ORIENT:"): handle_orientation_change(msg[7:])
+    elif msg.startswith("BRIGHT:"): handle_brightness_change(msg[7:]) # <-- ADDED THIS LINE
     elif msg == "CLEAR_WIFI":       clear_wifi_profiles(); hide_spinner(); bottom_label.config(text=""); status_label.config(text="Waiting for Wi-Fi…"); subprocess.run(["pkill","-f","chromium"], check=False)
     elif msg == "REBOOT":           subprocess.run(["sudo", "reboot"], check=False)
-    else: log_debug("Unknown BLE cmd")
+    else: log_debug(f"Unknown BLE cmd: {msg}")
 
 # ───────────────────────── BLE server thread ──────────────────────────
 def start_gatt():
@@ -246,18 +261,16 @@ def start_gatt():
 # ─────────────────────────── Build GUI ────────────────────────────────
 root = tb.Window(themename="litera")
 
-# ↓↓↓ NEW — hide cursor immediately  ↓↓↓
-root.config(cursor="none")                   # hide by default
+root.config(cursor="none")
 
 def _show_then_hide(_):
-    root.config(cursor="arrow")              # show on movement
+    root.config(cursor="arrow")
     if hasattr(_show_then_hide, "job"):
         root.after_cancel(_show_then_hide.job)
-    _show_then_hide.job = root.after(500,   # hide again after 0.5 s
+    _show_then_hide.job = root.after(500,
                                      lambda: root.config(cursor="none"))
 
-root.bind("<Motion>", _show_then_hide)       # track mouse movement
-# ↑↑↑ NEW — end of cursor helper   ↑↑↑
+root.bind("<Motion>", _show_then_hide)
 
 root.style.colors.set("info", GREEN)
 root.style.configure("TFrame", background="black")
@@ -279,7 +292,6 @@ status_label.pack()
 load_spinner()
 spinner_label = tk.Label(center, bg="black", bd=0, highlightthickness=0)
 
-# persistent bottom-line message
 bottom_label = ttk.Label(root, text="", style="Secondary.TLabel")
 bottom_label.pack(side="bottom", pady=10)
 

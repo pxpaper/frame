@@ -1,8 +1,9 @@
+#!/usr/bin/env python3
 """
 gui.py – Pixel-Paper frame GUI & BLE provisioning
 
 • Animated loading.gif spinner (2× speed) while Chromium launches
-• BLE commands: WIFI, ORIENT, BRIGHT, CLEAR_WIFI, REBOOT
+• BLE commands: WIFI, ORIENT, CLEAR_WIFI, REBOOT
 • On wrong Wi-Fi password, shows ‘Authentication failed — wrong password?’
   in a persistent bottom line until another Wi-Fi attempt succeeds.
 """
@@ -16,7 +17,7 @@ from ttkbootstrap import ttk
 
 # ── paths ───────────────────────────────────────────────────────────────
 SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
-SPINNER_GIF = os.path.join(SCRIPT_DIR, "loading.gif")
+SPINNER_GIF = os.path.join(SCRIPT_DIR, "loading.gif")   # provide your GIF here
 
 # ── constants & globals ─────────────────────────────────────────────────
 GREEN  = "#1FC742"
@@ -71,7 +72,7 @@ def log_debug(msg: str):
 
 # ───────────────────────── Spinner helpers ─────────────────────────────
 spinner_frames, spinner_running = [], False
-SPIN_DELAY = 40
+SPIN_DELAY = 40  # ms (≈2× normal speed)
 
 def load_spinner():
     if not os.path.exists(SPINNER_GIF):
@@ -143,7 +144,7 @@ def update_status():
     try:
         if check_wifi_connection():
             fail_count = 0
-            bottom_label.config(text="")
+            bottom_label.config(text="")  # clear any auth-fail msg
             if chromium_process is None or chromium_process.poll() is not None:
                 status_label.config(text="Wi-Fi Connected")
                 show_spinner()
@@ -189,9 +190,9 @@ def handle_wifi_data(payload: str):
             hide_spinner()
             bottom_label.config(text="Authentication failed — wrong password?")
             status_label.config(text="Waiting for Wi-Fi…")
-            fail_count = -999
+            fail_count = -999  # keep bottom msg until next attempt
 
-    root.after(6000, verdict)
+    root.after(6000, verdict)  # allow WPA handshake
 
 def handle_orientation_change(arg: str):
     """Rotate HDMI output via kanshi (normal|90|180|270)."""
@@ -212,27 +213,23 @@ def handle_orientation_change(arg: str):
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     log_debug("Portrait" if arg in ("90", "270") else "Landscape")
 
-# --- NEW: Function to handle brightness commands ---
-def handle_brightness_change(payload: str):
-    """Set monitor brightness using ddcutil (0-100)."""
-    try:
-        # Ensure the value is an integer between 0 and 100
-        brightness = int(payload)
-        if not (0 <= brightness <= 100):
-            raise ValueError("Brightness must be between 0 and 100")
-        
-        # Use subprocess to call the command line tool
-        subprocess.run(["ddcutil", "set", "10", str(brightness)], check=True)
-        log_debug(f"Brightness set to {brightness}%")
-    except (ValueError, subprocess.CalledProcessError) as e:
-        log_debug(f"Brightness error: {e}")
-
 def ble_callback(val, _):
     if val is None: return
     msg = (bytes(val) if isinstance(val, list) else val).decode("utf-8", "ignore").strip()
     if   msg.startswith("WIFI:"):   handle_wifi_data(msg[5:])
     elif msg.startswith("ORIENT:"): handle_orientation_change(msg[7:])
-    elif msg.startswith("BRIGHT:"): handle_brightness_change(msg[7:]) # <-- ADDED THIS LINE
+    # --- START: Added brightness control ---
+    elif msg.startswith("BRIGHT:"):
+        try:
+            brightness_value = int(msg[7:])
+            if 0 <= brightness_value <= 100:
+                subprocess.run(["ddcutil", "set", "10", str(brightness_value)], check=True)
+                log_debug(f"Brightness set to {brightness_value}%")
+            else:
+                log_debug("Brightness value out of range (0-100)")
+        except (ValueError, subprocess.CalledProcessError) as e:
+            log_debug(f"Brightness command failed: {e}")
+    # --- END: Added brightness control ---
     elif msg == "CLEAR_WIFI":       clear_wifi_profiles(); hide_spinner(); bottom_label.config(text=""); status_label.config(text="Waiting for Wi-Fi…"); subprocess.run(["pkill","-f","chromium"], check=False)
     elif msg == "REBOOT":           subprocess.run(["sudo", "reboot"], check=False)
     else: log_debug(f"Unknown BLE cmd: {msg}")

@@ -15,6 +15,7 @@ import ttkbootstrap as tb
 from ttkbootstrap.toast import ToastNotification
 from ttkbootstrap import ttk
 from PIL import Image, ImageTk, ImageSequence
+from datetime import datetime
 
 # ── paths ───────────────────────────────────────────────────────────────
 SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
@@ -37,6 +38,11 @@ SERIAL_CHAR_UUID          = "12345678-1234-5678-1234-56789abcdef2"
 
 toast_queue = queue.SimpleQueue()
 wifi_status_queue = queue.SimpleQueue()
+
+# NEW: toggle for auto mode
+auto_brightness_enabled = False
+# NEW: cache last applied level
+last_set_brightness = -1
 
 # ─────────────────────────── Optimized Toast ─────────────────────────────
 def show_toast_from_queue():
@@ -218,12 +224,43 @@ def handle_orientation_change(arg: str):
     subprocess.Popen(["kanshi", "-c", p], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     log_message("Portrait" if arg in ("90", "270") else "Landscape")
 
+# ── NEW: Auto-Brightness Helpers ────────────────────────────────────────
+def set_brightness_for_time():
+    """Adjust brightness based on current hour."""
+    global last_set_brightness
+    hour = datetime.now().hour
+    if   0 <= hour < 7:    level = 0
+    elif 7 <= hour < 8:    level = 25
+    elif 8 <= hour < 9:    level = 50
+    elif 9 <= hour < 10:   level = 75
+    elif 10 <= hour < 18:  level = 100
+    elif 18 <= hour < 19:  level = 75
+    elif 19 <= hour < 20:  level = 50
+    elif 20 <= hour < 21:  level = 25
+    else:                  level = 0
+    if level != last_set_brightness:
+        try:
+            subprocess.run(["ddcutil", "set", "10", str(level)], check=True)
+            log_message(f"Auto-brightness set to {level}%", "info")
+            last_set_brightness = level
+        except (ValueError, subprocess.CalledProcessError) as e:
+            log_message(f"Auto-brightness failed: {e}", "danger")
+
+def auto_brightness_worker():
+    """Background thread: periodically adjust brightness if enabled."""
+    while True:
+        if auto_brightness_enabled:
+            set_brightness_for_time()
+        time.sleep(60)
+
 def ble_callback(val, _):
+    global auto_brightness_enabled  # allow toggling
     if val is None: return
     msg = (bytes(val) if isinstance(val, list) else val).decode("utf-8", "ignore").strip()
-    if   msg.startswith("WIFI:"):   handle_wifi_data(msg[5:])
-    elif msg.startswith("ORIENT:"): handle_orientation_change(msg[7:])
+    if   msg.startswith("WIFI:"):     handle_wifi_data(msg[5:])
+    elif msg.startswith("ORIENT:"):   handle_orientation_change(msg[7:])
     elif msg.startswith("BRIGHT:"):
+        auto_brightness_enabled = False   # manual defeats auto
         try:
             brightness_value = int(msg[7:])
             if 0 <= brightness_value <= 100:
@@ -233,6 +270,14 @@ def ble_callback(val, _):
                 log_message("Brightness value out of range (0-100)", "warning")
         except (ValueError, subprocess.CalledProcessError) as e:
             log_message(f"Brightness command failed: {e}", "danger")
+    elif msg.startswith("AUTOBRIGHT:"):  # NEW command
+        if msg[11:].strip().lower() == "on":
+            auto_brightness_enabled = True
+            log_message("Auto-brightness enabled", "info")
+            set_brightness_for_time()
+        else:
+            auto_brightness_enabled = False
+            log_message("Auto-brightness disabled", "warning")
     elif msg == "CLEAR_WIFI":
         global chromium_process
         if chromium_process:
@@ -342,6 +387,7 @@ bottom_label.pack(side="bottom", pady=10)
 disable_pairing()
 threading.Thread(target=start_gatt, daemon=True).start()
 threading.Thread(target=wifi_check_worker, daemon=True).start()
+threading.Thread(target=auto_brightness_worker, daemon=True).start()  # NEW: start auto-brightness thread
 root.after(100, show_toast_from_queue)
 root.after(1000, manage_system_state)
 

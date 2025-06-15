@@ -280,19 +280,23 @@ try:
     icon_size = (90, 90)
     resample_filter = Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS
 
-    if os.path.exists(WIFI_ON_ICON):
-        with Image.open(WIFI_ON_ICON) as img:
-            # Convert to RGBA to preserve transparency
+    # Helper function to process and composite the icon
+    def process_icon(filepath):
+        if not os.path.exists(filepath):
+            return None
+        with Image.open(filepath) as img:
+            # 1. Convert to RGBA to ensure it has an alpha channel
             img_rgba = img.convert("RGBA")
-            resized_img = img_rgba.resize(icon_size, resample_filter)
-            wifi_on_img = ImageTk.PhotoImage(resized_img)
-            
-    if os.path.exists(WIFI_OFF_ICON):
-        with Image.open(WIFI_OFF_ICON) as img:
-            # Convert to RGBA to preserve transparency
-            img_rgba = img.convert("RGBA")
-            resized_img = img_rgba.resize(icon_size, resample_filter)
-            wifi_off_img = ImageTk.PhotoImage(resized_img)
+            # 2. Resize the icon
+            resized_icon = img_rgba.resize(icon_size, resample_filter)
+            # 3. Create a new black background image
+            background = Image.new("RGBA", icon_size, (0, 0, 0, 255))
+            # 4. Paste the icon onto the black background using its own alpha as the mask
+            background.paste(resized_icon, (0, 0), resized_icon)
+            return ImageTk.PhotoImage(background)
+
+    wifi_on_img = process_icon(WIFI_ON_ICON)
+    wifi_off_img = process_icon(WIFI_OFF_ICON)
 
 except Exception as e:
     log_message(f"Icon load error: {e}", "danger")

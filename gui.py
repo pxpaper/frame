@@ -56,7 +56,7 @@ def show_toast_from_queue():
     finally:
         root.after(100, show_toast_from_queue)
 
-def log_message(msg: str, style="customgreen"): # Default to our custom green
+def log_message(msg: str, style="info"): # Default to the info style
     """Public function to queue a toast message."""
     toast_queue.put((msg, style))
     print(msg, flush=True)
@@ -233,8 +233,24 @@ def ble_callback(val, _):
 
 # ───────────────────────── BLE server thread (UNCHANGED) ────────────────
 def start_gatt():
-    # ... (this function is unchanged)
-    pass
+    while True:
+        try:
+            dongles = adapter.Adapter.available()
+            if not dongles: log_message("No BLE adapter!", "danger"); time.sleep(5); continue
+            addr = list(dongles)[0].address
+            ble  = peripheral.Peripheral(addr, local_name="PixelPaper")
+            ble.add_service(1, PROVISIONING_SERVICE_UUID, primary=True)
+            ble.add_characteristic(1, 1, PROVISIONING_CHAR_UUID,
+                                   value=[], notifying=False,
+                                   flags=['write', 'write-without-response'],
+                                   write_callback=ble_callback)
+            ble.add_characteristic(1, 2, SERIAL_CHAR_UUID,
+                                   value=list(get_serial_number().encode()),
+                                   notifying=False, flags=['read'],
+                                   read_callback=lambda _o: list(get_serial_number().encode()))
+            ble.publish()
+        except Exception as e: log_message(f"GATT error: {e}", "danger")
+        time.sleep(5)
 
 # ─────────────────────────── Build GUI ────────────────────────────────
 root = tb.Window(themename="darkly")
@@ -247,8 +263,8 @@ def _show_then_hide(_):
 
 root.bind("<Motion>", _show_then_hide)
 
-# NEW: Define a custom color for toast notifications
-root.style.colors.add('customgreen', GREEN)
+# UPDATED: Modify the existing 'info' style to use our custom green color
+root.style.colors.set('info', GREEN)
 
 root.style.configure("TFrame", background="black")
 root.style.configure("Status.TLabel", background="black", foreground=GREEN, font=("Helvetica", 48, "bold"))
@@ -259,7 +275,7 @@ root.title("Frame Status")
 root.attributes("-fullscreen", True)
 root.bind("<Escape>", lambda e: root.attributes("-fullscreen", False))
 
-# --- NEW: Wi-Fi Icon Setup ---
+# --- Wi-Fi Icon Setup ---
 wifi_on_img = wifi_off_img = None
 try:
     if os.path.exists(WIFI_ON_ICON):

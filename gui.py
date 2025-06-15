@@ -223,9 +223,27 @@ def ble_callback(val, _):
         except (ValueError, subprocess.CalledProcessError) as e:
             log_message(f"Brightness command failed: {e}", "danger")
     elif msg == "CLEAR_WIFI":
-        clear_wifi_profiles(); hide_spinner()
-        bottom_label.config(text=""); status_label.config(text="Waiting for Wi-Fi…")
-        subprocess.run(["pkill","-f","chromium"], check=False)
+        global chromium_process
+        if chromium_process:
+            chromium_process.kill()
+            chromium_process = None
+        
+        clear_wifi_profiles()
+        hide_spinner()
+        bottom_label.config(text="")
+        status_label.config(text="Waiting for Wi-Fi…")
+
+        # Empty the queue to prevent processing stale 'True' status
+        while not wifi_status_queue.empty():
+            try:
+                wifi_status_queue.get_nowait()
+            except queue.Empty:
+                break
+        
+        # Manually update the icon immediately
+        if wifi_off_img:
+            wifi_icon_label.config(image=wifi_off_img)
+
     elif msg == "REBOOT":
         subprocess.run(["sudo", "reboot"], check=False)
     else:
@@ -280,18 +298,13 @@ try:
     icon_size = (90, 90)
     resample_filter = Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS
 
-    # Helper function to process and composite the icon
     def process_icon(filepath):
         if not os.path.exists(filepath):
             return None
         with Image.open(filepath) as img:
-            # 1. Convert to RGBA to ensure it has an alpha channel
             img_rgba = img.convert("RGBA")
-            # 2. Resize the icon
             resized_icon = img_rgba.resize(icon_size, resample_filter)
-            # 3. Create a new black background image
             background = Image.new("RGBA", icon_size, (0, 0, 0, 255))
-            # 4. Paste the icon onto the black background using its own alpha as the mask
             background.paste(resized_icon, (0, 0), resized_icon)
             return ImageTk.PhotoImage(background)
 

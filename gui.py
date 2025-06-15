@@ -161,7 +161,7 @@ def manage_system_state():
 
     root.after(1000, manage_system_state)
 
-# ─────────────────── BLE provisioning handlers (UNCHANGED) ──────────────
+# ─────────────────── BLE provisioning handlers ────────────────────────
 def check_wifi_connection():
     try:
         s = socket.create_connection(("8.8.8.8", 53), timeout=3)
@@ -170,14 +170,25 @@ def check_wifi_connection():
         return False
         
 def handle_wifi_data(payload: str):
+    """Try supplied SSID/password. Show auth failure on bottom line."""
     global fail_count
-    try:
-        ssid, password = payload.split(';', 1)[0], payload.split(':', 1)[1]
-    except ValueError:
-        log_message("Wi-Fi payload malformed", "warning"); return
+    
+    parts = payload.split(';', 1)
+    ssid = parts[0]
+    password = parts[1] if len(parts) > 1 else None
+
+    if not ssid:
+        log_message("Wi-Fi SSID cannot be empty.", "warning")
+        return
 
     clear_wifi_profiles()
-    subprocess.run(["nmcli", "d", "wifi", "connect", ssid, "password", password], check=False)
+
+    # Build the command based on whether a password was provided
+    command = ["nmcli", "d", "wifi", "connect", ssid]
+    if password:
+        command.extend(["password", password])
+    
+    subprocess.run(command, check=False)
 
     def verdict():
         if check_wifi_connection():
@@ -186,7 +197,7 @@ def handle_wifi_data(payload: str):
         else:
             subprocess.run(["nmcli", "c", "delete", ssid], check=False)
             hide_spinner()
-            bottom_label.config(text="Authentication failed — wrong password?")
+            bottom_label.config(text="Authentication failed")
             status_label.config(text="Waiting for Wi-Fi…")
             fail_count = -999
 
@@ -233,14 +244,12 @@ def ble_callback(val, _):
         bottom_label.config(text="")
         status_label.config(text="Waiting for Wi-Fi…")
 
-        # Empty the queue to prevent processing stale 'True' status
         while not wifi_status_queue.empty():
             try:
                 wifi_status_queue.get_nowait()
             except queue.Empty:
                 break
         
-        # Manually update the icon immediately
         if wifi_off_img:
             wifi_icon_label.config(image=wifi_off_img)
 

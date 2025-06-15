@@ -277,18 +277,21 @@ root.bind("<Escape>", lambda e: root.attributes("-fullscreen", False))
 # --- Wi-Fi Icon Setup ---
 wifi_on_img = wifi_off_img = None
 try:
-    # UPDATED: Resize images after loading them with Pillow
     icon_size = (90, 90)
     resample_filter = Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS
 
     if os.path.exists(WIFI_ON_ICON):
         with Image.open(WIFI_ON_ICON) as img:
-            resized_img = img.resize(icon_size, resample_filter)
+            # Convert to RGBA to preserve transparency
+            img_rgba = img.convert("RGBA")
+            resized_img = img_rgba.resize(icon_size, resample_filter)
             wifi_on_img = ImageTk.PhotoImage(resized_img)
             
     if os.path.exists(WIFI_OFF_ICON):
         with Image.open(WIFI_OFF_ICON) as img:
-            resized_img = img.resize(icon_size, resample_filter)
+            # Convert to RGBA to preserve transparency
+            img_rgba = img.convert("RGBA")
+            resized_img = img_rgba.resize(icon_size, resample_filter)
             wifi_off_img = ImageTk.PhotoImage(resized_img)
 
 except Exception as e:

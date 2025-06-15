@@ -16,6 +16,7 @@ from ttkbootstrap import ttk
 from PIL import Image, ImageTk, ImageSequence
 from datetime import datetime
 import pytz
+import socketio
 
 # ── paths & constants ───────────────────────────────────────────────────
 SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
@@ -45,6 +46,29 @@ toast_queue = queue.SimpleQueue()
 wifi_status_queue = queue.SimpleQueue()
 auto_brightness_enabled = False
 last_set_brightness = -1
+
+# --- NEW: Socket.IO Client for Remote Control ---
+sio = socketio.Client(reconnection_attempts=10, reconnection_delay=5)
+
+@sio.event
+def connect():
+    log_message("Control socket connected to server.")
+
+@sio.event
+def disconnect():
+    log_message("Control socket disconnected.", "warning")
+
+@sio.on('restart_chromium')
+def on_restart_chromium():
+    """Handles the restart command from the server."""
+    global chromium_process
+    log_message("Restart command received from server!", "warning")
+    if chromium_process and chromium_process.poll() is None:
+        try:
+            chromium_process.kill()
+        except Exception:
+            subprocess.run(["pkill", "-f", "chromium"], check=False)
+    chromium_process = None
 
 # ─────────────────────────── Optimized Toast ─────────────────────────────
 def show_toast_from_queue():
@@ -346,6 +370,20 @@ def start_gatt():
             # If there's an error, wait a moment before trying to restart
             time.sleep(5)
 
+# --- NEW: control socket connector ---
+def start_control_socket():
+    """Keeps the control socket connected to the server."""
+    serial = get_serial_number()
+    auth = {'role': 'controller', 'frameId': serial}
+    while True:
+        try:
+            if not sio.connected:
+                sio.connect('https://pixelpaper.com', auth=auth, transports=['websocket'])
+                sio.wait()
+        except Exception as e:
+            print(f"Control socket connection failed: {e}")
+        time.sleep(10)
+
 # ─────────────────────────── Build GUI ────────────────────────────────
 root = tb.Window(themename="darkly")
 root.config(cursor="none")
@@ -402,6 +440,7 @@ disable_pairing()
 threading.Thread(target=start_gatt, daemon=True).start()
 threading.Thread(target=wifi_check_worker, daemon=True).start()
 threading.Thread(target=auto_brightness_worker, daemon=True).start()
+threading.Thread(target=start_control_socket, daemon=True).start()
 root.after(100, show_toast_from_queue)
 root.after(1000, manage_system_state)
 

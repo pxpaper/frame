@@ -2,13 +2,12 @@
 """
 gui.py – Pixel-Paper frame GUI & BLE provisioning (Optimized)
 
-• Non-blocking Wi-Fi check for a responsive UI.
-• Smoother, artifact-free toast notifications.
-• Efficient GIF handling with Pillow.
-• BLE commands: WIFI, ORIENT, BRIGHT, AUTOBRIGHT, CLEAR_WIFI, REBOOT
+• Timezone-aware, timetable-based auto-brightness.
+• Handles complex BLE commands for all features.
+• Restored robust command parsing in ble_callback.
 """
 
-import os, queue, socket, subprocess, threading, time, tkinter as tk
+import os, queue, socket, subprocess, threading, time, tkinter as tk, json
 from itertools import count
 from bluezero import adapter, peripheral
 import ttkbootstrap as tb
@@ -16,44 +15,36 @@ from ttkbootstrap.toast import ToastNotification
 from ttkbootstrap import ttk
 from PIL import Image, ImageTk, ImageSequence
 from datetime import datetime
-import json                           # NEW: persist timezone
-import pytz                           # NEW: timezone handling
+import pytz
 
 # ── paths & constants ───────────────────────────────────────────────────
 SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
+TIMEZONE_FILE = os.path.join(SCRIPT_DIR, 'timezone.json')
 SPINNER_GIF = os.path.join(SCRIPT_DIR, "loading.gif")
 WIFI_ON_ICON  = os.path.join(SCRIPT_DIR, "assets", "wifi_on.png")
 WIFI_OFF_ICON = os.path.join(SCRIPT_DIR, "assets", "wifi_off.png")
-TIMEZONE_FILE = os.path.join(SCRIPT_DIR, 'timezone.json')  # NEW: store timezone
 
 # ── Timetable ──────────────────────────────────────────────────────────
 TIMETABLE = {
-    (0, 6):   0,
-    (6, 7):  25,
-    (7, 8):  50,
-    (8, 9):  75,
-    (9, 18):100,
-    (18,19): 75,
-    (19,20): 50,
-    (20,21): 25,
-    (21,24):  0,
+    (0, 6): 0, (6, 7): 25, (7, 8): 50, (8, 9): 75,
+    (9, 18): 100, (18, 19): 75, (19, 20): 50,
+    (20, 21): 25, (21, 24): 0,
 }
 
 # ── constants & globals ─────────────────────────────────────────────────
 GREEN  = "#1FC742"
 GREEN2 = "#025B18"
-FAIL_MAX          = 3
-chromium_process  = None
-fail_count        = 0
-
+FAIL_MAX         = 3
+chromium_process = None
+fail_count       = 0
 PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 PROVISIONING_CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
 SERIAL_CHAR_UUID          = "12345678-1234-5678-1234-56789abcdef2"
 
 toast_queue = queue.SimpleQueue()
 wifi_status_queue = queue.SimpleQueue()
-auto_brightness_enabled = False # NEW: State for auto-brightness
-last_set_brightness = -1 # NEW: Cache last brightness to avoid redundant calls
+auto_brightness_enabled = False
+last_set_brightness = -1
 
 # ─────────────────────────── Optimized Toast ─────────────────────────────
 def show_toast_from_queue():
@@ -174,14 +165,13 @@ def get_current_timezone():
     try:
         if os.path.exists(TIMEZONE_FILE):
             with open(TIMEZONE_FILE, 'r') as f:
-                tz = json.load(f).get('timezone', 'UTC')
-                return pytz.timezone(tz)
+                data = json.load(f)
+                return pytz.timezone(data.get('timezone', 'UTC'))
     except Exception:
         pass
     return pytz.timezone('UTC')
 
 def set_manual_brightness(value):
-    """Sets a specific brightness and caches it."""
     global last_set_brightness
     if value == last_set_brightness:
         return
@@ -193,16 +183,14 @@ def set_manual_brightness(value):
         log_message(f"Brightness command failed: {e}", "danger")
 
 def set_brightness_for_time():
-    """Apply brightness from TIMETABLE using saved timezone."""
     tz = get_current_timezone()
-    hour = datetime.now(tz).hour
+    current_hour = datetime.now(tz).hour
     for (start, end), lvl in TIMETABLE.items():
-        if start <= hour < end:
+        if start <= current_hour < end:
             set_manual_brightness(lvl)
             return
 
 def auto_brightness_worker():
-    """Adjust brightness every 5 minutes if enabled."""
     while True:
         if auto_brightness_enabled:
             set_brightness_for_time()
@@ -252,53 +240,72 @@ def handle_orientation_change(arg: str):
     subprocess.Popen(["kanshi", "-c", p], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     log_message("Portrait" if arg in ("90", "270") else "Landscape")
 
+# --- NEW: handle_clear_wifi restored ---
+def handle_clear_wifi():
+    global chromium_process, fail_count
+    if chromium_process:
+        chromium_process.kill()
+        chromium_process = None
+    clear_wifi_profiles()
+    hide_spinner()
+    bottom_label.config(text="")
+    status_label.config(text="Waiting for Wi-Fi…")
+    while not wifi_status_queue.empty():
+        try:
+            wifi_status_queue.get_nowait()
+        except queue.Empty:
+            break
+    if wifi_off_img:
+        wifi_icon_label.config(image=wifi_off_img)
+
+# ── BLE provisioning handler (CORRECTED) ──────────────────────────────
 def ble_callback(val, _):
     global auto_brightness_enabled
     if val is None: return
-    msg = (bytes(val) if isinstance(val, list) else val).decode().strip()
-    try:
-        cmd, valstr = msg.split(":", 1)
-        if   cmd == "WIFI":
-            handle_wifi_data(valstr)
-        elif cmd == "ORIENT":
-            handle_orientation_change(valstr)
-        elif cmd == "CLEAR_WIFI":
-            handle_clear_wifi()
-        elif cmd == "REBOOT":
-            subprocess.run(["sudo", "reboot"], check=False)
-        elif cmd == "TIMEZONE":
-            # save and validate timezone
-            try:
-                pytz.timezone(valstr)
-                with open(TIMEZONE_FILE, 'w') as f:
-                    json.dump({'timezone': valstr}, f)
-                log_message(f"Timezone set to {valstr}")
-            except Exception:
-                log_message(f"Invalid timezone: {valstr}", "danger")
-        elif cmd == "BRIGHT":
-            # manual slider override
+    msg = (bytes(val) if isinstance(val, list) else val).decode("utf-8", "ignore").strip()
+    
+    log_message(f"Received: {msg}")
+
+    if msg.startswith("WIFI:"):
+        handle_wifi_data(msg[5:])
+    elif msg.startswith("ORIENT:"):
+        handle_orientation_change(msg[7:])
+    elif msg.startswith("TIMEZONE:"):
+        tz_name = msg[9:]
+        try:
+            pytz.timezone(tz_name)
+            with open(TIMEZONE_FILE, 'w') as f:
+                json.dump({'timezone': tz_name}, f)
+            log_message(f"Timezone set to {tz_name}")
+        except Exception:
+            log_message(f"Invalid timezone: {tz_name}", "danger")
+    elif msg.startswith("BRIGHT:"):
+        auto_brightness_enabled = False
+        log_message("Auto-brightness disabled by manual override.")
+        try:
+            set_manual_brightness(int(msg[7:]))
+        except ValueError:
+            log_message(f"Invalid brightness value: {msg[7:]}", "warning")
+    elif msg.startswith("AUTOBRIGHT:"):
+        value = msg[11:]
+        if value.startswith("ON"):
+            auto_brightness_enabled = True
+            log_message("Auto-brightness enabled")
+            set_brightness_for_time()
+        elif value.startswith("OFF"):
             auto_brightness_enabled = False
-            log_message("Auto-brightness disabled by manual override.")
-            set_manual_brightness(int(valstr))
-        elif cmd == "AUTOBRIGHT":
-            parts = valstr.split(":",1)
-            mode  = parts[0]
-            if mode == "ON":
-                auto_brightness_enabled = True
-                log_message("Auto-brightness enabled")
-                set_brightness_for_time()
-            elif mode == "OFF":
-                auto_brightness_enabled = False
-                if len(parts) > 1:
-                    snap = int(parts[1])
-                    log_message(f"Auto-brightness disabled, snapping to {snap}%")
-                    set_manual_brightness(snap)
-                else:
-                    log_message("Auto-brightness disabled")
-        else:
-            log_message(f"Unknown BLE cmd: {cmd}", "warning")
-    except Exception as e:
-        log_message(f"Failed to parse cmd '{msg}': {e}", "danger")
+            try:
+                snap_value = int(value.split(':', 1)[1])
+                log_message(f"Auto-brightness disabled, snapping to {snap_value}%")
+                set_manual_brightness(snap_value)
+            except Exception:
+                log_message("Auto-brightness disabled (no snap value)")
+    elif msg == "CLEAR_WIFI":
+        handle_clear_wifi()
+    elif msg == "REBOOT":
+        subprocess.run(["sudo", "reboot"], check=False)
+    else:
+        log_message(f"Unknown BLE cmd: {msg}", "warning")
 
 # --- UPDATED: Restored the infinite loop to keep the BLE service running ---
 def start_gatt():

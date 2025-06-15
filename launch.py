@@ -3,9 +3,7 @@
 launch.py – updater + GUI bootstrapper for Pixel Paper
 ------------------------------------------------------
  • If Internet is up → pull public tarball → overlay files
- • Builds a venv that inherits system packages (bluezero, dbus)
- • Only runs pip installs when network_available == True
- • Exposes update_repo() so gui.py can trigger another overlay later
+ • Assumes a pre-existing python venv with all packages.
 """
 
 import hashlib, os, shutil, subprocess, sys, tarfile, tempfile, urllib.request
@@ -18,10 +16,10 @@ SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
 VENV_DIR     = os.path.join(SCRIPT_DIR, "venv")
 VENV_PY      = os.path.join(VENV_DIR, "bin", "python3")
 GUI_SCRIPT   = os.path.join(SCRIPT_DIR, "gui.py")
-REQ_FILE     = os.path.join(SCRIPT_DIR, "requirements-frame.txt")  # optional
 
 # ────────────────────────────────────────────────────────────────────────
 def network_available(timeout=NETWORK_WAIT) -> bool:
+    """Checks for a live internet connection."""
     try:
         subprocess.run(
             ["nm-online", "--wait-for-startup", "--timeout", str(timeout)],
@@ -31,6 +29,7 @@ def network_available(timeout=NETWORK_WAIT) -> bool:
         return False
 
 def download_tarball(url=TARBALL_URL, dest=DOWNLOAD_TO):
+    """Downloads the release tarball to a destination."""
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     print(f"[update] downloading {url}")
     with urllib.request.urlopen(url, timeout=60) as r, open(dest, "wb") as o:
@@ -41,9 +40,11 @@ def download_tarball(url=TARBALL_URL, dest=DOWNLOAD_TO):
     return dest
 
 def overlay_tarball(tar_path, dest_dir=SCRIPT_DIR):
+    """Extracts and overlays files using rsync."""
     with tempfile.TemporaryDirectory(dir=os.path.dirname(tar_path)) as tdir:
         with tarfile.open(tar_path, "r:gz") as t:
             t.extractall(tdir)
+        # Find the root directory inside the tarball (e.g., 'frame-main')
         root = next(p for p in os.listdir(tdir)
                     if os.path.isdir(os.path.join(tdir, p)))
         src = os.path.join(tdir, root)
@@ -52,48 +53,30 @@ def overlay_tarball(tar_path, dest_dir=SCRIPT_DIR):
              f"{src}/", f"{dest_dir}/"], check=True)
         print("[update] overlay complete")
 
-def ensure_venv(create_only=False):
-    if not os.path.exists(VENV_PY):
-        print("[venv] creating (inherits system pkgs)")
-        subprocess.run(
-            [sys.executable, "-m", "venv", "--system-site-packages", VENV_DIR],
-            check=True)
-    if create_only:
-        return
-
-    pip = [VENV_PY, "-m", "pip", "install", "--no-deps"]  # skip dbus-python
-    if os.path.exists(REQ_FILE):
-        subprocess.run(pip + ["-r", REQ_FILE], check=True)
-    else:
-        subprocess.run(pip + ["bluezero"], check=True)
-    print("[venv] packages ready")
-
-# ── public helper so gui.py can trigger update once Wi-Fi is set up ─────
 def update_repo():
+    """Public helper to download and overlay the repo."""
     try:
-        tp = download_tarball()
-        overlay_tarball(tp)
+        tarball_path = download_tarball()
+        overlay_tarball(tarball_path)
     except Exception as err:
-        print("[update_repo] failed:", err)
+        print(f"[update_repo] failed: {err}")
 
 # ── MAIN ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    net = network_available()
-    if net:
+    if network_available():
         try:
+            print("[update] network available, checking for updates...")
             update_repo()
         except Exception as e:
-            print("[update] skipped (error)", e)
+            print(f"[update] skipped due to an error: {e}")
     else:
-        print("[update] no network – deferring to BLE provisioning")
+        print("[update] no network – launching GUI directly")
 
-    # venv bootstrap (skip pip if no Internet)
-    try:
-        ensure_venv(create_only=not net)
-        py = VENV_PY
-    except Exception as e:
-        print("[venv] error – using system python", e)
-        py = sys.executable
+    # Determine which python executable to use as a fallback.
+    py_executable = VENV_PY if os.path.exists(VENV_PY) else sys.executable
+    if py_executable == sys.executable:
+        print("[launcher] WARNING: venv not found, using system python.")
 
-    # start GUI
-    subprocess.Popen([py, GUI_SCRIPT])
+    # Start the GUI script.
+    print(f"[launcher] starting gui.py using {os.path.basename(py_executable)}")
+    subprocess.Popen([py_executable, GUI_SCRIPT])

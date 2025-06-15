@@ -160,7 +160,7 @@ def manage_system_state():
 
     root.after(1000, manage_system_state)
 
-# ── NEW: Timezone and Brightness Logic ─────────────────────────────────
+# ── Timezone and Brightness Logic (UPDATED) ───────────────────────────────
 def get_current_timezone():
     try:
         if os.path.exists(TIMEZONE_FILE):
@@ -171,23 +171,28 @@ def get_current_timezone():
         pass
     return pytz.timezone('UTC')
 
-def set_manual_brightness(value):
+# UPDATED signature: add silent flag to suppress toast if desired
+def set_manual_brightness(value, silent=False):
+    """Sets a specific brightness, caches it, and optionally logs."""
     global last_set_brightness
     if value == last_set_brightness:
         return
     try:
         subprocess.run(["ddcutil", "setvcp", "10", str(value)], check=True)
-        log_message(f"Brightness set to {value}%")
+        if not silent:
+            log_message(f"Brightness set to {value}%")
         last_set_brightness = value
     except Exception as e:
         log_message(f"Brightness command failed: {e}", "danger")
 
 def set_brightness_for_time():
+    """Apply brightness from TIMETABLE using saved timezone."""
     tz = get_current_timezone()
     current_hour = datetime.now(tz).hour
     for (start, end), lvl in TIMETABLE.items():
         if start <= current_hour < end:
-            set_manual_brightness(lvl)
+            # silent update as part of auto-mode
+            set_manual_brightness(lvl, silent=True)
             return
 
 def auto_brightness_worker():
@@ -258,52 +263,54 @@ def handle_clear_wifi():
     if wifi_off_img:
         wifi_icon_label.config(image=wifi_off_img)
 
-# ── BLE provisioning handler (CORRECTED) ──────────────────────────────
+# ── BLE provisioning handler (CORRECTED for smarter logging) ─────────────
 def ble_callback(val, _):
     global auto_brightness_enabled
     if val is None: return
     msg = (bytes(val) if isinstance(val, list) else val).decode("utf-8", "ignore").strip()
     
-    log_message(f"Received: {msg}")
+    print(f"Received BLE command: {msg}")  # raw debug
 
     if msg.startswith("WIFI:"):
         handle_wifi_data(msg[5:])
     elif msg.startswith("ORIENT:"):
         handle_orientation_change(msg[7:])
     elif msg.startswith("TIMEZONE:"):
+        # background setting only, no toast
         tz_name = msg[9:]
         try:
             pytz.timezone(tz_name)
             with open(TIMEZONE_FILE, 'w') as f:
                 json.dump({'timezone': tz_name}, f)
-            log_message(f"Timezone set to {tz_name}")
+            print(f"Timezone set to {tz_name}")
         except Exception:
-            log_message(f"Invalid timezone: {tz_name}", "danger")
+            print(f"ERROR: Invalid timezone received: {tz_name}")
+
     # --- THIS IS THE CORRECTED LOGIC ---
     elif msg.startswith("BRIGHT:"):
-        # Only log disabling auto-mode if it was actually ON.
         if auto_brightness_enabled:
-            log_message("Auto-brightness disabled by manual override.")
             auto_brightness_enabled = False
+            log_message("Auto-brightness disabled.")
         try:
-            # Single, correct toast from set_manual_brightness
             set_manual_brightness(int(msg[7:]))
         except ValueError:
             log_message(f"Invalid brightness value: {msg[7:]}", "warning")
+
     elif msg.startswith("AUTOBRIGHT:"):
         value = msg[11:]
         if value.startswith("ON"):
             auto_brightness_enabled = True
-            log_message("Auto-brightness enabled")
-            set_brightness_for_time()
+            set_brightness_for_time()      # immediate adjust
+            log_message("Auto-brightness enabled")  # single toast
         elif value.startswith("OFF"):
             auto_brightness_enabled = False
             try:
-                snap_value = int(value.split(':', 1)[1])
-                log_message(f"Auto-brightness disabled, snapping to {snap_value}%")
-                set_manual_brightness(snap_value)
+                snap = int(value.split(':',1)[1])
+                set_manual_brightness(snap, silent=True)
+                log_message(f"Auto-brightness OFF. Set to {snap}%")
             except Exception:
-                log_message("Auto-brightness disabled (no snap value)")
+                log_message("Auto-brightness disabled")
+
     elif msg == "CLEAR_WIFI":
         handle_clear_wifi()
     elif msg == "REBOOT":

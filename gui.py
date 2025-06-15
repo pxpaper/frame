@@ -247,8 +247,9 @@ def ble_callback(val, _):
                 log_message("Brightness value out of range (0-100)", "warning")
         except (ValueError, subprocess.CalledProcessError) as e:
             log_message(f"Brightness command failed: {e}", "danger")
-    elif msg.startswith("AUTOBRIGHT:"): # NEW: Handle auto-brightness command
-        if msg[11:].lower() == 'on':
+    elif msg.startswith("AUTOBRIGHT:"): # Correctly handle 1/0
+        # Check for '1' to enable, and anything else (like '0') to disable
+        if msg[11:] == '1':
             auto_brightness_enabled = True
             log_message("Auto-brightness enabled")
             set_brightness_for_time() # Immediately apply correct brightness

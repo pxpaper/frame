@@ -279,10 +279,14 @@ def ble_callback(val, _):
             log_message(f"Timezone set to {tz_name}")
         except Exception:
             log_message(f"Invalid timezone: {tz_name}", "danger")
+    # --- THIS IS THE CORRECTED LOGIC ---
     elif msg.startswith("BRIGHT:"):
-        auto_brightness_enabled = False
-        log_message("Auto-brightness disabled by manual override.")
+        # Only log disabling auto-mode if it was actually ON.
+        if auto_brightness_enabled:
+            log_message("Auto-brightness disabled by manual override.")
+            auto_brightness_enabled = False
         try:
+            # Single, correct toast from set_manual_brightness
             set_manual_brightness(int(msg[7:]))
         except ValueError:
             log_message(f"Invalid brightness value: {msg[7:]}", "warning")

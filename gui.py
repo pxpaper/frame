@@ -7,7 +7,7 @@ gui.py – Pixel-Paper frame GUI & BLE provisioning (Optimized)
 • Restored robust command parsing in ble_callback.
 """
 
-import os, queue, socket, subprocess, threading, time, tkinter as tk, json
+import os, queue, socket, subprocess, threading, time, tkinter as tk, json, sys
 from itertools import count
 from bluezero import adapter, peripheral
 import ttkbootstrap as tb
@@ -16,7 +16,6 @@ from ttkbootstrap import ttk
 from PIL import Image, ImageTk, ImageSequence
 from datetime import datetime
 import pytz
-import socketio
 
 # ── paths & constants ───────────────────────────────────────────────────
 SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
@@ -46,29 +45,6 @@ toast_queue = queue.SimpleQueue()
 wifi_status_queue = queue.SimpleQueue()
 auto_brightness_enabled = False
 last_set_brightness = -1
-
-# --- NEW: Socket.IO Client for Remote Control ---
-sio = socketio.Client(reconnection_attempts=10, reconnection_delay=5)
-
-@sio.event
-def connect():
-    log_message("Control socket connected to server.")
-
-@sio.event
-def disconnect():
-    log_message("Control socket disconnected.", "warning")
-
-@sio.on('restart_chromium')
-def on_restart_chromium():
-    """Handles the restart command from the server."""
-    global chromium_process
-    log_message("Restart command received from server!", "warning")
-    if chromium_process and chromium_process.poll() is None:
-        try:
-            chromium_process.kill()
-        except Exception:
-            subprocess.run(["pkill", "-f", "chromium"], check=False)
-    chromium_process = None
 
 # ─────────────────────────── Optimized Toast ─────────────────────────────
 def show_toast_from_queue():
@@ -225,6 +201,21 @@ def auto_brightness_worker():
             set_brightness_for_time()
         time.sleep(300)
 
+# --- NEW: periodic Chromium restart every 12 hours ---
+def timed_chromium_restart_worker():
+    """Restarts Chromium every 12 hours to keep it fresh."""
+    global chromium_process
+    restart_interval = 12 * 60 * 60
+    while True:
+        time.sleep(restart_interval)
+        log_message("Performing scheduled 12-hour Chromium restart.", "info")
+        if chromium_process and chromium_process.poll() is None:
+            try:
+                chromium_process.kill()
+            except Exception:
+                subprocess.run(["pkill", "-f", "chromium"], check=False)
+        chromium_process = None
+
 # ─────────────────── BLE provisioning handlers ────────────────────────
 def check_wifi_connection():
     try:
@@ -370,20 +361,6 @@ def start_gatt():
             # If there's an error, wait a moment before trying to restart
             time.sleep(5)
 
-# --- NEW: control socket connector ---
-def start_control_socket():
-    """Keeps the control socket connected to the server."""
-    serial = get_serial_number()
-    auth = {'role': 'controller', 'frameId': serial}
-    while True:
-        try:
-            if not sio.connected:
-                sio.connect('https://pixelpaper.com', auth=auth, transports=['websocket'])
-                sio.wait()
-        except Exception as e:
-            print(f"Control socket connection failed: {e}")
-        time.sleep(10)
-
 # ─────────────────────────── Build GUI ────────────────────────────────
 root = tb.Window(themename="darkly")
 root.config(cursor="none")
@@ -440,7 +417,7 @@ disable_pairing()
 threading.Thread(target=start_gatt, daemon=True).start()
 threading.Thread(target=wifi_check_worker, daemon=True).start()
 threading.Thread(target=auto_brightness_worker, daemon=True).start()
-threading.Thread(target=start_control_socket, daemon=True).start()
+threading.Thread(target=timed_chromium_restart_worker, daemon=True).start()  # NEW watchdog
 root.after(100, show_toast_from_queue)
 root.after(1000, manage_system_state)
 

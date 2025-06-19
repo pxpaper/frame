@@ -110,12 +110,14 @@ def disable_pairing():
 
 def clear_wifi_profiles():
     try:
+        # This command is read-only and doesn't need sudo
         out = subprocess.check_output(["nmcli", "-t", "-f", "UUID,TYPE", "c"], text=True)
         for ln in out.splitlines():
             uuid, ctype = ln.split(':', 1)
             if ctype == "802-11-wireless":
-                subprocess.run(["nmcli", "c", "delete", uuid], check=False, capture_output=True)
-        subprocess.run(["nmcli", "c", "reload"], check=False)
+                subprocess.run(["sudo", "nmcli", "c", "delete", uuid], check=False, capture_output=True)
+        # PREPEND 'sudo'
+        subprocess.run(["sudo", "nmcli", "c", "reload"], check=False)
     except Exception as exc:
         log_message(f"Wi-Fi Clear Error: {exc}", "warning")
 
@@ -232,7 +234,8 @@ def handle_wifi_data(payload: str):
         log_message("Wi-Fi SSID cannot be empty.", "warning"); return
 
     clear_wifi_profiles()
-    command = ["nmcli", "d", "wifi", "connect", ssid]
+    # PREPEND 'sudo' TO THE COMMAND
+    command = ["sudo", "nmcli", "d", "wifi", "connect", ssid]
     if password: command.extend(["password", password])
     subprocess.run(command, check=False)
 
@@ -240,7 +243,8 @@ def handle_wifi_data(payload: str):
         if check_wifi_connection():
             log_message(f"Connected to: '{ssid}'"); bottom_label.config(text="")
         else:
-            subprocess.run(["nmcli", "c", "delete", ssid], check=False); hide_spinner()
+            # PREPEND 'sudo' HERE AS WELL
+            subprocess.run(["sudo", "nmcli", "c", "delete", ssid], check=False); hide_spinner()
             bottom_label.config(text="Authentication failed"); status_label.config(text="Waiting for Wi-Fi…")
             fail_count = -999
     root.after(6000, verdict)

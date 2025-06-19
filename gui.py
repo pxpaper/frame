@@ -229,51 +229,51 @@ def check_wifi_connection():
 def handle_wifi_data(payload: str):
     """
     Handles Wi-Fi provisioning using a robust, multi-step nmcli process.
-    This is more reliable for scripting than a single 'connect' command.
+    This version correctly parses the 'SSID;PASS:PASSWORD' format.
     """
     global fail_count
-    parts = payload.split(';', 1)
-    ssid, password = (parts[0], parts[1] if len(parts) > 1 else None)
     
-    if not ssid:
-        log_message("Wi-Fi SSID cannot be empty.", "warning")
+    # --- THIS IS THE FIX ---
+    # The payload is in the format "SSID;PASS:PASSWORD"
+    # We need to parse it correctly.
+    try:
+        ssid_part, pass_part = payload.split(';', 1)
+        if pass_part.upper().startswith("PASS:"):
+            password = pass_part[5:]
+        else:
+            # Fallback for old format, just in case
+            password = pass_part
+        ssid = ssid_part
+    except ValueError:
+        log_message(f"Invalid WIFI format: {payload}", "danger")
         return
-    if not password:
-        log_message("Wi-Fi password cannot be empty.", "warning")
+
+    if not ssid or not password:
+        log_message("SSID or Password is empty after parsing.", "warning")
         return
 
     log_message(f"Configuring Wi-Fi for '{ssid}'...")
     show_spinner()
     
-    # Define the wireless interface name (usually wlan0 on a Pi)
     interface_name = "wlan0"
     
-    # --- Robust Reconnection Logic ---
+    # --- The rest of this logic from our last attempt is CORRECT ---
     try:
-        # 1. Delete any old connection profile with the same name to ensure a clean slate.
-        # We use the SSID as the connection name ('con-name').
         subprocess.run(
             ["sudo", "nmcli", "connection", "delete", ssid],
             check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
 
-        # 2. Add a new connection profile with all settings explicitly defined.
         add_command = [
-            "sudo", "nmcli", "connection", "add",
-            "type", "wifi",
-            "con-name", ssid,
-            "ifname", interface_name,
-            "ssid", ssid,
-            "--",
-            "wifi-sec.key-mgmt", "wpa-psk",
-            "wifi-sec.psk", password
+            "sudo", "nmcli", "connection", "add", "type", "wifi",
+            "con-name", ssid, "ifname", interface_name, "ssid", ssid,
+            "--", "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password
         ]
         result = subprocess.run(
             add_command, check=True, capture_output=True, text=True
         )
         print(f"[nmcli add] STDOUT: {result.stdout}")
         
-        # 3. Explicitly bring the new connection up.
         up_command = ["sudo", "nmcli", "connection", "up", ssid]
         result = subprocess.run(
             up_command, check=True, capture_output=True, text=True
@@ -281,31 +281,26 @@ def handle_wifi_data(payload: str):
         print(f"[nmcli up] STDOUT: {result.stdout}")
 
     except subprocess.CalledProcessError as e:
-        # If any nmcli command fails, we know there's a problem.
         hide_spinner()
         log_message("Connection failed. Please check credentials.", "danger")
         print(f"[nmcli error] CMD: '{' '.join(e.cmd)}'")
         print(f"[nmcli error] STDERR: {e.stderr}")
         bottom_label.config(text="Authentication failed")
         status_label.config(text="Waiting for Wi-Fi…")
-        fail_count = -999 # Use special value to prevent normal fail count logic
+        fail_count = -999
         return
 
-    # The 'verdict' function can now be simpler.
-    # It just checks for internet access after the commands succeed.
     def verdict():
         if check_wifi_connection():
             log_message(f"Successfully connected to '{ssid}'", "success")
             bottom_label.config(text="")
         else:
-            # This case is less likely now, but good to have as a fallback.
             hide_spinner()
             log_message("Failed to get internet. Check network.", "warning")
             bottom_label.config(text="No internet")
             status_label.config(text="Waiting for Wi-Fi…")
             fail_count = -999
             
-    # Give NetworkManager a few seconds to establish the connection fully.
     root.after(8000, verdict)
 
 def handle_orientation_change(arg: str):

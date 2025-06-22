@@ -193,7 +193,6 @@ def manage_system_state():
                     "--disable-features=Translate",
                     "--no-sandbox",
                     "--disable-extensions",
-                    "--disable-gpu",
                     "--disable-dev-shm-usage",
                     "--autoplay-policy=no-user-gesture-required",
                     url

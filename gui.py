@@ -149,7 +149,16 @@ def manage_system_state():
                 show_spinner()
                 subprocess.run(["pkill", "-f", "chromium"], check=False)
                 url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
-                chromium_process = subprocess.Popen(["chromium", "--kiosk", "--disable-features=Translate", url])
+                chromium_process = subprocess.Popen(
+                    ["chromium",
+                    "--kiosk",
+                    "--disable-features=Translate",
+                    "--no-sandbox",             # Reduces process overhead. SECURITY RISK: Only use on a trusted, isolated network.
+                    "--disable-extensions",     # Saves a lot of memory.
+                    "--disable-gpu",            # Frees GPU memory, useful if rendering is simple. Try removing if you see graphical glitches.
+                    "--disable-dev-shm-usage",  # Prevents crashes related to a small /dev/shm partition.
+                    "--autoplay-policy=no-user-gesture-required",
+                    url])
         else:
             hide_spinner()
             fail_count += 1

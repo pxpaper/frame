@@ -2,9 +2,10 @@
 """
 gui.py – Pixel-Paper frame GUI & BLE provisioning (Optimized)
 
+• Now detects and recovers from "Aw, Snap!" page crashes in Chromium.
+• Requires 'xdotool' (install with: sudo apt-get install xdotool).
 • Timezone-aware, timetable-based auto-brightness.
 • Handles complex BLE commands for all features.
-• Restored robust command parsing in ble_callback.
 """
 
 import os, queue, socket, subprocess, threading, time, tkinter as tk, json, sys
@@ -110,13 +111,11 @@ def disable_pairing():
 
 def clear_wifi_profiles():
     try:
-        # This command is read-only and doesn't need sudo
         out = subprocess.check_output(["nmcli", "-t", "-f", "UUID,TYPE", "c"], text=True)
         for ln in out.splitlines():
             uuid, ctype = ln.split(':', 1)
             if ctype == "802-11-wireless":
                 subprocess.run(["sudo", "nmcli", "c", "delete", uuid], check=False, capture_output=True)
-        # PREPEND 'sudo'
         subprocess.run(["sudo", "nmcli", "c", "reload"], check=False)
     except Exception as exc:
         log_message(f"Wi-Fi Clear Error: {exc}", "warning")
@@ -133,8 +132,37 @@ def wifi_check_worker():
             wifi_status_queue.put(False)
         time.sleep(5)
 
+def check_chromium_page_health():
+    """
+    Checks if the active Chromium window's title indicates a crash.
+    Returns True if healthy, False if crashed ("Aw, Snap!").
+    Requires 'xdotool' to be installed (sudo apt-get install xdotool).
+    """
+    if chromium_process is None or chromium_process.poll() is not None:
+        return True # Not running, so not crashed in this context. The main loop will handle restart.
+    try:
+        # Get the ID of the active window
+        active_window_cmd = ["xdotool", "getactivewindow"]
+        active_window_id = subprocess.check_output(active_window_cmd, text=True, timeout=1).strip()
+
+        # Get the name of the active window by its ID
+        window_name_cmd = ["xdotool", "getwindowname", active_window_id]
+        window_title = subprocess.check_output(window_name_cmd, text=True, timeout=1).strip().lower()
+
+        # Check for common crash-related titles. "untitled" can be a symptom.
+        crashed_titles = ["aw, snap!", "untitled"]
+        if any(title in window_title for title in crashed_titles):
+            log_message(f"Detected 'Aw, Snap!' error. Window title: {window_title}", "warning")
+            return False
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+        # If xdotool fails, assume it's okay to avoid false positives.
+        # Log the error so the user knows if xdotool is missing.
+        print(f"Could not check window title (is xdotool installed?): {e}", flush=True)
+        return True
+
 def manage_system_state():
-    """Checks queue and updates GUI/Chromium without blocking."""
+    """Checks queue and updates GUI/Chromium without blocking. Acts as a watchdog."""
     global chromium_process, fail_count
     try:
         is_connected = wifi_status_queue.get_nowait()
@@ -144,21 +172,33 @@ def manage_system_state():
         if is_connected:
             fail_count = 0
             bottom_label.config(text="")
-            if chromium_process is None or chromium_process.poll() is not None:
+            
+            # This is the watchdog logic. It now checks for a full process crash OR an "Aw, Snap!" page crash.
+            is_process_dead = chromium_process is None or chromium_process.poll() is not None
+            is_page_crashed = not check_chromium_page_health()
+
+            if is_process_dead or is_page_crashed:
+                if is_process_dead and chromium_process is not None:
+                    log_message("Chromium process not found. Restarting...", "info")
+                
                 status_label.config(text="Wi-Fi Connected")
                 show_spinner()
                 subprocess.run(["pkill", "-f", "chromium"], check=False)
+                
                 url = f"https://pixelpaper.com/frame.html?id={get_serial_number()}"
-                chromium_process = subprocess.Popen(
-                    ["chromium",
+                
+                chromium_flags = [
+                    "chromium",
                     "--kiosk",
                     "--disable-features=Translate",
-                    "--no-sandbox",             # Reduces process overhead. SECURITY RISK: Only use on a trusted, isolated network.
-                    "--disable-extensions",     # Saves a lot of memory.
-                    "--disable-gpu",            # Frees GPU memory, useful if rendering is simple. Try removing if you see graphical glitches.
-                    "--disable-dev-shm-usage",  # Prevents crashes related to a small /dev/shm partition.
+                    "--no-sandbox",
+                    "--disable-extensions",
+                    "--disable-gpu",
+                    "--disable-dev-shm-usage",
                     "--autoplay-policy=no-user-gesture-required",
-                    url])
+                    url
+                ]
+                chromium_process = subprocess.Popen(chromium_flags)
         else:
             hide_spinner()
             fail_count += 1
@@ -171,7 +211,7 @@ def manage_system_state():
 
     root.after(1000, manage_system_state)
 
-# ── Timezone and Brightness Logic (UPDATED) ───────────────────────────────
+# ── Timezone and Brightness Logic ───────────────────────────────
 def get_current_timezone():
     try:
         if os.path.exists(TIMEZONE_FILE):
@@ -182,7 +222,6 @@ def get_current_timezone():
         pass
     return pytz.timezone('UTC')
 
-# UPDATED signature: add silent flag to suppress toast if desired
 def set_manual_brightness(value, silent=False):
     """Sets a specific brightness, caches it, and optionally logs."""
     global last_set_brightness
@@ -202,7 +241,6 @@ def set_brightness_for_time():
     current_hour = datetime.now(tz).hour
     for (start, end), lvl in TIMETABLE.items():
         if start <= current_hour < end:
-            # silent update as part of auto-mode
             set_manual_brightness(lvl, silent=True)
             return
 
@@ -212,7 +250,6 @@ def auto_brightness_worker():
             set_brightness_for_time()
         time.sleep(300)
 
-# --- NEW: periodic Chromium restart every 12 hours ---
 def timed_chromium_restart_worker():
     """Restarts Chromium every 12 hours to keep it fresh."""
     global chromium_process
@@ -236,21 +273,12 @@ def check_wifi_connection():
         return False
         
 def handle_wifi_data(payload: str):
-    """
-    Handles Wi-Fi provisioning using a robust, multi-step nmcli process.
-    This version correctly parses the 'SSID;PASS:PASSWORD' format.
-    """
     global fail_count
-    
-    # --- THIS IS THE FIX ---
-    # The payload is in the format "SSID;PASS:PASSWORD"
-    # We need to parse it correctly.
     try:
         ssid_part, pass_part = payload.split(';', 1)
         if pass_part.upper().startswith("PASS:"):
             password = pass_part[5:]
         else:
-            # Fallback for old format, just in case
             password = pass_part
         ssid = ssid_part
     except ValueError:
@@ -266,7 +294,6 @@ def handle_wifi_data(payload: str):
     
     interface_name = "wlan0"
     
-    # --- The rest of this logic from our last attempt is CORRECT ---
     try:
         subprocess.run(
             ["sudo", "nmcli", "connection", "delete", ssid],
@@ -278,21 +305,14 @@ def handle_wifi_data(payload: str):
             "con-name", ssid, "ifname", interface_name, "ssid", ssid,
             "--", "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password
         ]
-        result = subprocess.run(
-            add_command, check=True, capture_output=True, text=True
-        )
-        print(f"[nmcli add] STDOUT: {result.stdout}")
+        subprocess.run(add_command, check=True, capture_output=True, text=True)
         
         up_command = ["sudo", "nmcli", "connection", "up", ssid]
-        result = subprocess.run(
-            up_command, check=True, capture_output=True, text=True
-        )
-        print(f"[nmcli up] STDOUT: {result.stdout}")
+        subprocess.run(up_command, check=True, capture_output=True, text=True)
 
     except subprocess.CalledProcessError as e:
         hide_spinner()
         log_message("Connection failed. Please check credentials.", "danger")
-        print(f"[nmcli error] CMD: '{' '.join(e.cmd)}'")
         print(f"[nmcli error] STDERR: {e.stderr}")
         bottom_label.config(text="Authentication failed")
         status_label.config(text="Waiting for Wi-Fi…")
@@ -327,7 +347,6 @@ def handle_orientation_change(arg: str):
     subprocess.Popen(["kanshi", "-c", p], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     log_message("Portrait" if arg in ("90", "270") else "Landscape")
 
-# --- NEW: handle_clear_wifi restored ---
 def handle_clear_wifi():
     global chromium_process, fail_count
     if chromium_process:
@@ -345,20 +364,18 @@ def handle_clear_wifi():
     if wifi_off_img:
         wifi_icon_label.config(image=wifi_off_img)
 
-# ── BLE provisioning handler (CORRECTED for smarter logging) ─────────────
 def ble_callback(val, _):
     global auto_brightness_enabled
     if val is None: return
     msg = (bytes(val) if isinstance(val, list) else val).decode("utf-8", "ignore").strip()
     
-    print(f"Received BLE command: {msg}")  # raw debug
+    print(f"Received BLE command: {msg}")
 
     if msg.startswith("WIFI:"):
         handle_wifi_data(msg[5:])
     elif msg.startswith("ORIENT:"):
         handle_orientation_change(msg[7:])
     elif msg.startswith("TIMEZONE:"):
-        # background setting only, no toast
         tz_name = msg[9:]
         try:
             pytz.timezone(tz_name)
@@ -368,7 +385,6 @@ def ble_callback(val, _):
         except Exception:
             print(f"ERROR: Invalid timezone received: {tz_name}")
 
-    # --- THIS IS THE CORRECTED LOGIC ---
     elif msg.startswith("BRIGHT:"):
         if auto_brightness_enabled:
             auto_brightness_enabled = False
@@ -382,8 +398,8 @@ def ble_callback(val, _):
         value = msg[11:]
         if value.startswith("ON"):
             auto_brightness_enabled = True
-            set_brightness_for_time()      # immediate adjust
-            log_message("Auto-brightness enabled")  # single toast
+            set_brightness_for_time()
+            log_message("Auto-brightness enabled")
         elif value.startswith("OFF"):
             auto_brightness_enabled = False
             try:
@@ -400,7 +416,6 @@ def ble_callback(val, _):
     else:
         log_message(f"Unknown BLE cmd: {msg}", "warning")
 
-# --- UPDATED: Restored the infinite loop to keep the BLE service running ---
 def start_gatt():
     """Initializes and runs the BLE GATT server in a persistent loop."""
     while True:
@@ -422,10 +437,9 @@ def start_gatt():
                                    list(get_serial_number().encode()), False, ['read'],
                                    read_callback=lambda _o: list(get_serial_number().encode()))
             
-            ble.publish() # This starts advertising and runs its own loop
+            ble.publish()
         except Exception as e:
             log_message(f"GATT error: {e}", "danger")
-            # If there's an error, wait a moment before trying to restart
             time.sleep(5)
 
 # ─────────────────────────── Build GUI ────────────────────────────────
@@ -447,7 +461,6 @@ root.title("Frame Status")
 root.attributes("-fullscreen", True)
 root.bind("<Escape>", lambda e: root.attributes("-fullscreen", False))
 
-# --- Wi-Fi Icon Setup ---
 wifi_on_img = wifi_off_img = None
 try:
     icon_size = (90, 90)
@@ -468,7 +481,6 @@ except Exception as e:
 wifi_icon_label = tk.Label(root, bg="black", bd=0, highlightthickness=0)
 if wifi_off_img: wifi_icon_label.config(image=wifi_off_img)
 wifi_icon_label.place(x=10, y=10)
-# --- End Wi-Fi Icon Setup ---
 
 center = ttk.Frame(root, style="TFrame"); center.pack(expand=True)
 status_label = ttk.Label(center, text="Checking Wi-Fi…", style="Status.TLabel")
@@ -484,7 +496,7 @@ disable_pairing()
 threading.Thread(target=start_gatt, daemon=True).start()
 threading.Thread(target=wifi_check_worker, daemon=True).start()
 threading.Thread(target=auto_brightness_worker, daemon=True).start()
-threading.Thread(target=timed_chromium_restart_worker, daemon=True).start()  # NEW watchdog
+threading.Thread(target=timed_chromium_restart_worker, daemon=True).start()
 root.after(100, show_toast_from_queue)
 root.after(1000, manage_system_state)
 

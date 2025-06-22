@@ -190,10 +190,8 @@ def manage_system_state():
                 chromium_flags = [
                     "chromium",
                     "--kiosk",
-                    "--disable-features=Translate",
                     "--no-sandbox",
                     "--disable-extensions",
-                    "--disable-dev-shm-usage",
                     "--autoplay-policy=no-user-gesture-required",
                     url
                 ]

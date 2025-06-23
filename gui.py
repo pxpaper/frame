@@ -20,6 +20,7 @@ import pytz
 
 # ── paths & constants ───────────────────────────────────────────────────
 SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
+SETTINGS_FILE = os.path.join(SCRIPT_DIR, 'settings.json')  # NEW: persistent settings
 TIMEZONE_FILE = os.path.join(SCRIPT_DIR, 'timezone.json')
 SPINNER_GIF = os.path.join(SCRIPT_DIR, "loading.gif")
 WIFI_ON_ICON  = os.path.join(SCRIPT_DIR, "assets", "wifi_on.png")
@@ -41,11 +42,44 @@ fail_count       = 0
 PROVISIONING_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 PROVISIONING_CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
 SERIAL_CHAR_UUID          = "12345678-1234-5678-1234-56789abcdef2"
+SETTINGS_CHAR_UUID       = "12345678-1234-5678-1234-56789abcdef3"  # NEW: settings
 
 toast_queue = queue.SimpleQueue()
 wifi_status_queue = queue.SimpleQueue()
 auto_brightness_enabled = False
 last_set_brightness = -1
+settings_cache = {}  # NEW: in-memory settings
+
+# ─────────────────── Settings Persistence (NEW) ─────────────────────────
+def load_settings():
+    defaults = {'orientation':'normal','brightness':80,'autoBrightness':False}
+    try:
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE) as f:
+                settings = json.load(f)
+        else:
+            settings = defaults; save_settings(defaults)
+    except Exception:
+        settings = defaults
+    globals()['settings_cache'] = {**defaults, **settings}
+    globals()['auto_brightness_enabled'] = settings_cache['autoBrightness']
+    return settings_cache
+
+def save_settings(new):
+    settings_cache.update(new)
+    try:
+        with open(SETTINGS_FILE,'w') as f:
+            json.dump(settings_cache, f, indent=4)
+    except Exception as e:
+        log_message(f"Error saving settings: {e}", "danger")
+
+def apply_startup_settings():
+    s = load_settings()
+    handle_orientation_change(s['orientation'], silent=True)
+    if s['autoBrightness']:
+        set_brightness_for_time()
+    else:
+        set_manual_brightness(s['brightness'], silent=True)
 
 # ─────────────────────────── Optimized Toast ─────────────────────────────
 def show_toast_from_queue():
@@ -329,7 +363,7 @@ def handle_wifi_data(payload: str):
             
     root.after(8000, verdict)
 
-def handle_orientation_change(arg: str):
+def handle_orientation_change(arg: str, silent=False):
     output = "HDMI-A-1"
     try:
         mode = subprocess.check_output("wlr-randr | grep '(current)' | awk '{print $1\"@\"$3}'", shell=True, text=True).strip()
@@ -342,7 +376,8 @@ def handle_orientation_change(arg: str):
     os.chmod(p, 0o600)
     subprocess.run(["killall", "kanshi"], check=False)
     subprocess.Popen(["kanshi", "-c", p], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    log_message("Portrait" if arg in ("90", "270") else "Landscape")
+    if not silent:
+        log_message("Portrait" if arg in ("90","270") else "Landscape")
 
 def handle_clear_wifi():
     global chromium_process, fail_count
@@ -371,38 +406,33 @@ def ble_callback(val, _):
     if msg.startswith("WIFI:"):
         handle_wifi_data(msg[5:])
     elif msg.startswith("ORIENT:"):
-        handle_orientation_change(msg[7:])
-    elif msg.startswith("TIMEZONE:"):
-        tz_name = msg[9:]
-        try:
-            pytz.timezone(tz_name)
-            with open(TIMEZONE_FILE, 'w') as f:
-                json.dump({'timezone': tz_name}, f)
-            print(f"Timezone set to {tz_name}")
-        except Exception:
-            print(f"ERROR: Invalid timezone received: {tz_name}")
+        orientation_val = msg[7:]
+        handle_orientation_change(orientation_val)
+        save_settings({'orientation': orientation_val})
 
     elif msg.startswith("BRIGHT:"):
-        if auto_brightness_enabled:
-            auto_brightness_enabled = False
-            log_message("Auto-brightness disabled.")
+        auto_brightness_enabled = False
         try:
-            set_manual_brightness(int(msg[7:]))
+            b = int(msg[7:])
+            set_manual_brightness(b)
+            save_settings({'brightness': b, 'autoBrightness': False})
         except ValueError:
             log_message(f"Invalid brightness value: {msg[7:]}", "warning")
 
     elif msg.startswith("AUTOBRIGHT:"):
-        value = msg[11:]
-        if value.startswith("ON"):
+        v = msg[11:]
+        if v.startswith("ON"):
             auto_brightness_enabled = True
             set_brightness_for_time()
             log_message("Auto-brightness enabled")
-        elif value.startswith("OFF"):
+            save_settings({'autoBrightness': True})
+        elif v.startswith("OFF"):
             auto_brightness_enabled = False
             try:
-                snap = int(value.split(':',1)[1])
+                snap = int(v.split(':',1)[1])
                 set_manual_brightness(snap, silent=True)
                 log_message(f"Auto-brightness OFF. Set to {snap}%")
+                save_settings({'brightness': snap, 'autoBrightness': False})
             except Exception:
                 log_message("Auto-brightness disabled")
 
@@ -412,6 +442,11 @@ def ble_callback(val, _):
         subprocess.run(["sudo", "reboot"], check=False)
     else:
         log_message(f"Unknown BLE cmd: {msg}", "warning")
+
+# ── NEW: Expose settings via BLE read characteristic ─────────────────
+def settings_read_callback(_):
+    s = load_settings()
+    return list(json.dumps(s).encode())
 
 def start_gatt():
     """Initializes and runs the BLE GATT server in a persistent loop."""
@@ -433,6 +468,9 @@ def start_gatt():
             ble.add_characteristic(1, 2, SERIAL_CHAR_UUID,
                                    list(get_serial_number().encode()), False, ['read'],
                                    read_callback=lambda _o: list(get_serial_number().encode()))
+            ble.add_characteristic(1, 3, SETTINGS_CHAR_UUID,
+                                   value=[], notifying=False,
+                                   flags=['read'], read_callback=settings_read_callback)
             
             ble.publish()
         except Exception as e:
@@ -490,6 +528,7 @@ bottom_label = ttk.Label(root, text="", style="Secondary.TLabel")
 bottom_label.pack(side="bottom", pady=10)
 
 disable_pairing()
+apply_startup_settings()  # NEW: load/apply settings on startup
 threading.Thread(target=start_gatt, daemon=True).start()
 threading.Thread(target=wifi_check_worker, daemon=True).start()
 threading.Thread(target=auto_brightness_worker, daemon=True).start()

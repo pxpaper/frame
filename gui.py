@@ -448,6 +448,11 @@ def settings_read_callback(_):
     s = load_settings()
     return list(json.dumps(s).encode())
 
+def get_initial_settings_payload():
+    """Helper to get the initial settings payload for the GATT service."""
+    settings = load_settings()
+    return list(json.dumps(settings).encode())
+
 def start_gatt():
     """Initializes and runs the BLE GATT server in a persistent loop."""
     while True:
@@ -462,16 +467,18 @@ def start_gatt():
             ble = peripheral.Peripheral(addr, local_name="PixelPaper")
             
             ble.add_service(1, PROVISIONING_SERVICE_UUID, primary=True)
+
             ble.add_characteristic(1, 1, PROVISIONING_CHAR_UUID,
-                                   [], False, ['write', 'write-without-response'],
+                                   [], False, ['write','write-without-response'],
                                    write_callback=ble_callback)
             ble.add_characteristic(1, 2, SERIAL_CHAR_UUID,
                                    list(get_serial_number().encode()), False, ['read'],
                                    read_callback=lambda _o: list(get_serial_number().encode()))
+            # Initialize settings char with current data and support reads
             ble.add_characteristic(1, 3, SETTINGS_CHAR_UUID,
-                                   value=[], notifying=False,
+                                   value=get_initial_settings_payload(), notifying=False,
                                    flags=['read'], read_callback=settings_read_callback)
-            
+
             ble.publish()
         except Exception as e:
             log_message(f"GATT error: {e}", "danger")

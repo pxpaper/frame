@@ -471,9 +471,9 @@ def start_gatt():
             ble.add_characteristic(1, 1, PROVISIONING_CHAR_UUID,
                                    [], False, ['write','write-without-response'],
                                    write_callback=ble_callback)
-            # For a static value like serial, setting the value directly is most reliable.
             ble.add_characteristic(1, 2, SERIAL_CHAR_UUID,
-                                   list(get_serial_number().encode()), False, ['read'])
+                                   list(get_serial_number().encode()), False, ['read'],
+                                   read_callback=lambda _o: list(get_serial_number().encode()))
             # Initialize settings char with current data and support reads
             ble.add_characteristic(1, 3, SETTINGS_CHAR_UUID,
                                    value=get_initial_settings_payload(), notifying=False,
